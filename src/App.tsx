@@ -5,15 +5,13 @@ import { Input } from './components/Input';
 import { Select } from './components/Select';
 import { Checkbox } from './components/Checkbox';
 import { Button } from './components/Button';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  Legend, 
-  ResponsiveContainer,
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
   LineChart,
   Line
 } from 'recharts';
@@ -66,10 +64,11 @@ function App() {
   });
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value, type, checked } = e.target;
+    const target = e.target as HTMLInputElement;
+    const { name, value, type, checked } = target;
     setStats(prev => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : type === 'number' ? (parseFloat(value) || 0) : value,
+      [name]: type === 'checkbox' ? checked : (type === 'number' ? (parseFloat(value) || 0) : value),
     }));
   };
 
