@@ -6,12 +6,12 @@ import { Select } from './components/Select';
 import { Checkbox } from './components/Checkbox';
 import { Button } from './components/Button';
 import {
-  BarChart,
-  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
+  ResponsiveContainer,
   LineChart,
   Line
 } from 'recharts';
