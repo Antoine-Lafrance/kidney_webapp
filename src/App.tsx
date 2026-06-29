@@ -127,7 +127,7 @@ function App() {
     }, {}),
   );
   const [model2Inputs, setModel2Inputs] = useState<Model2Inputs>(createInitialModel2Inputs);
-  const [model2Histogram, setModel2Histogram] = useState<HistogramBin[]>(() => createRandomHistogram());
+  const [model2Histogram] = useState<HistogramBin[]>(() => createRandomHistogram());
 
   const activeStats = statsByModel[activeTabId];
   const activeModel = MODEL_TABS.find((tab) => tab.id === activeTabId) ?? MODEL_TABS[0];
