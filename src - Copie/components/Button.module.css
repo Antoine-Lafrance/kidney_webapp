@@ -1,0 +1,52 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  border: 1px solid transparent;
+}
+
+.primary {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.primary:hover {
+  color: hsl(var(--primary-foreground));
+  background-color: hsla(var(--primary), 0.7);
+}
+
+.secondary {
+  background-color: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+}
+
+.secondary:hover {
+  background-color: hsla(var(--secondary), 0.8);
+}
+
+.outline {
+  border-color: hsl(var(--border));
+  background-color: transparent;
+  color: hsl(var(--foreground));
+}
+
+.outline:hover {
+  background-color: hsl(var(--accent));
+}
+
+.ghost {
+  background-color: transparent;
+  color: hsl(var(--foreground));
+}
+
+.ghost:hover {
+  background-color: hsl(var(--accent));
+}
+
+.sm { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
+.md { padding: 0.5rem 1rem; font-size: 1rem; }
+.lg { padding: 0.75rem 1.5rem; font-size: 1.125rem; }

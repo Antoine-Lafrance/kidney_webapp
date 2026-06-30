@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Layout } from './components/Layout';
 import { Card } from './components/Card';
 import { Input } from './components/Input';
@@ -15,7 +15,6 @@ import {
   Line,
   BarChart,
   Bar,
-  ReferenceLine,
 } from 'recharts';
 
 interface TransplantStats {
@@ -59,18 +58,6 @@ interface Model2Inputs {
 interface HistogramBin {
   intervalle: string;
   frequence: number;
-  months: number;
-}
-
-interface SurvivalPoint {
-  year: number;
-  survival: number;
-}
-
-interface SurvivalChartPoint {
-  year: number;
-  survival: number;
-  redSurvival?: number;
 }
 
 interface ModelTab {
@@ -125,61 +112,10 @@ const createInitialModel2Inputs = (): Model2Inputs => ({
 
 const createRandomHistogram = (): HistogramBin[] => {
   const bins = ['0-10', '10-20', '20-30', '30-40', '40-50', '50-60', '60-70', '70-80', '80-90', '90-100'];
-  return bins.map((intervalle, index) => ({
+  return bins.map((intervalle) => ({
     intervalle,
-    months: index * 10,
     frequence: Math.floor(Math.random() * 90) + 10,
   }));
-};
-
-const createRandomModel1Dots = (): SurvivalPoint[] => {
-  const years = [1, 3, 5, 10];
-  let current = Math.floor(Math.random() * 9) + 88;
-  return years.map((year, index) => {
-    if (index > 0) {
-      const drop = Math.floor(Math.random() * 6) + 2;
-      current = Math.max(30, current - drop);
-    }
-    return { year, survival: current };
-  });
-};
-
-const downloadBlob = (blob: Blob, fileName: string) => {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-};
-
-const getChartSvgPayload = (container: HTMLDivElement | null) => {
-  if (!container) {
-    return null;
-  }
-
-  const svg = container.querySelector('svg');
-  if (!svg) {
-    return null;
-  }
-
-  const rect = svg.getBoundingClientRect();
-  const width = Math.max(1, Math.round(rect.width));
-  const height = Math.max(1, Math.round(rect.height));
-  const clonedSvg = svg.cloneNode(true) as SVGSVGElement;
-
-  clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  clonedSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
-  clonedSvg.setAttribute('width', String(width));
-  clonedSvg.setAttribute('height', String(height));
-  if (!clonedSvg.getAttribute('viewBox')) {
-    clonedSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  }
-
-  const svgText = new XMLSerializer().serializeToString(clonedSvg);
-  return { svgText, width, height };
 };
 
 function App() {
@@ -192,9 +128,6 @@ function App() {
   );
   const [model2Inputs, setModel2Inputs] = useState<Model2Inputs>(createInitialModel2Inputs);
   const [model2Histogram] = useState<HistogramBin[]>(() => createRandomHistogram());
-  const [model1RedDots] = useState<SurvivalPoint[]>(() => createRandomModel1Dots());
-  const model1ChartRef = useRef<HTMLDivElement | null>(null);
-  const model2ChartRef = useRef<HTMLDivElement | null>(null);
 
   const activeStats = statsByModel[activeTabId];
   const activeModel = MODEL_TABS.find((tab) => tab.id === activeTabId) ?? MODEL_TABS[0];
@@ -261,227 +194,6 @@ function App() {
     ],
     [activeStats.AGE],
   );
-  const survivalChartData = useMemo<SurvivalChartPoint[]>(
-    () =>
-      survivalData.map((point) => ({
-        ...point,
-        redSurvival:
-          activeTabId === 'model-1'
-            ? model1RedDots.find((redPoint) => redPoint.year === point.year)?.survival
-            : undefined,
-      })),
-    [activeTabId, model1RedDots, survivalData],
-  );
-  const renderModel1Tooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload || !payload.length) {
-      return null;
-    }
-
-    const givenDonor = payload.find((entry: any) => entry.dataKey === 'redSurvival')?.value;
-    const medianDonor = payload.find((entry: any) => entry.dataKey === 'survival')?.value;
-    const yearLabel = Number(label) === 1 ? 'année' : 'années';
-
-    return (
-      <div
-        style={{
-          backgroundColor: 'hsl(var(--card))',
-          border: '1px solid hsl(var(--border))',
-          borderRadius: 'var(--radius)',
-          padding: '0.75rem',
-          maxWidth: '280px',
-          display: 'grid',
-          gap: '0.35rem',
-        }}
-      >
-        <div style={{ fontWeight: 700 }}>{`${label} ${yearLabel} post-greffe`}</div>
-        {typeof givenDonor === 'number' && (
-          <div style={{ color: '#dc2626' }}>{`Survie estimée après ${label} ${yearLabel}: ${givenDonor.toFixed(1)}%`}</div>
-        )}
-        {typeof medianDonor === 'number' && (
-          <div>{`Survie moyenne estimée pour un donneur médian: ${medianDonor.toFixed(1)}%`}</div>
-        )}
-        <div style={{ fontSize: '0.82rem', color: 'hsl(var(--muted-foreground))', marginTop: '0.2rem' }}>
-          Lecture simple: la ligne rouge représente le donneur saisi, la ligne noire un donneur "typique". Plus le
-          pourcentage est élevé, meilleures sont les chances de survie à ce moment.
-        </div>
-      </div>
-    );
-  };
-  const renderModel2Tooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload || !payload.length) {
-      return null;
-    }
-
-    const freq = payload.find((entry: any) => entry.dataKey === 'frequence')?.value;
-    const annotationByBin: Record<string, string> = {
-      '20-30': 'After 20 months, about 10% of waitlisted patients have received a transplant and about 5% have died.',
-      '50-60': 'After 50 months, about 28% of waitlisted patients have received a transplant and about 14% have died.',
-    };
-
-    return (
-      <div
-        style={{
-          backgroundColor: 'hsl(var(--card))',
-          border: '1px solid hsl(var(--border))',
-          borderRadius: 'var(--radius)',
-          padding: '0.75rem',
-          maxWidth: '320px',
-          display: 'grid',
-          gap: '0.35rem',
-        }}
-      >
-        <div style={{ fontWeight: 700 }}>{`Interval: ${label} months`}</div>
-        {typeof freq === 'number' && <div>{`Frequency: ${freq}`}</div>}
-        {annotationByBin[label as string] && (
-          <div style={{ fontSize: '0.82rem', color: 'hsl(var(--muted-foreground))' }}>{annotationByBin[label as string]}</div>
-        )}
-      </div>
-    );
-  };
-  const twoColumnLayoutStyle: React.CSSProperties = {
-    display: 'grid',
-    gap: '2rem',
-    gridTemplateColumns: '1fr 2fr',
-    alignItems: 'start',
-  };
-  const stickyGraphColumnStyle: React.CSSProperties = {
-    display: 'grid',
-    gap: '2rem',
-    position: 'sticky',
-    top: '6.5rem',
-    alignSelf: 'start',
-  };
-  const exportChartAsSvg = (container: HTMLDivElement | null, fileBaseName: string) => {
-    const payload = getChartSvgPayload(container);
-    if (!payload) {
-      return;
-    }
-
-    const svgBlob = new Blob([payload.svgText], { type: 'image/svg+xml;charset=utf-8' });
-    downloadBlob(svgBlob, `${fileBaseName}.svg`);
-  };
-  const exportChartAsPng = async (container: HTMLDivElement | null, fileBaseName: string) => {
-    const payload = getChartSvgPayload(container);
-    if (!payload) {
-      return;
-    }
-
-    const svgBlob = new Blob([payload.svgText], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(svgBlob);
-    const image = new Image();
-
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = payload.width;
-        canvas.height = payload.height;
-
-        const context = canvas.getContext('2d');
-        if (!context) {
-          URL.revokeObjectURL(url);
-          reject(new Error('Canvas context unavailable'));
-          return;
-        }
-
-        context.drawImage(image, 0, 0, payload.width, payload.height);
-        canvas.toBlob((blob) => {
-          if (blob) {
-            downloadBlob(blob, `${fileBaseName}.png`);
-          }
-          URL.revokeObjectURL(url);
-          resolve();
-        }, 'image/png');
-      };
-
-      image.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error('Failed to render SVG into PNG'));
-      };
-
-      image.src = url;
-    });
-  };
-  const renderExportMenu = (container: HTMLDivElement | null, fileBaseName: string) => (
-    <details style={{ position: 'relative', display: 'inline-block', marginBottom: '0.75rem' }}>
-      <summary
-        style={{
-          listStyle: 'none',
-          cursor: 'pointer',
-          width: '2rem',
-          height: '2rem',
-          borderRadius: '999px',
-          border: '1px solid hsl(var(--border))',
-          display: 'grid',
-          placeItems: 'center',
-          userSelect: 'none',
-          fontWeight: 700,
-          backgroundColor: 'hsl(var(--background))',
-        }}
-        aria-label="Exporter le graphique"
-      >
-        ...
-      </summary>
-      <div
-        style={{
-          position: 'absolute',
-          top: '2.3rem',
-          right: 0,
-          zIndex: 20,
-          minWidth: '150px',
-          backgroundColor: 'hsl(var(--card))',
-          border: '1px solid hsl(var(--border))',
-          borderRadius: 'var(--radius)',
-          padding: '0.35rem',
-          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.12)',
-          display: 'grid',
-          gap: '0.25rem',
-        }}
-      >
-        <button
-          type="button"
-          onClick={(e) => {
-            void exportChartAsPng(container, fileBaseName);
-            const details = e.currentTarget.closest('details') as HTMLDetailsElement | null;
-            if (details) {
-              details.open = false;
-            }
-          }}
-          style={{
-            textAlign: 'left',
-            border: 'none',
-            background: 'transparent',
-            padding: '0.45rem 0.55rem',
-            borderRadius: '0.35rem',
-            cursor: 'pointer',
-            color: 'hsl(var(--foreground))',
-          }}
-        >
-          Export PNG
-        </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            exportChartAsSvg(container, fileBaseName);
-            const details = e.currentTarget.closest('details') as HTMLDetailsElement | null;
-            if (details) {
-              details.open = false;
-            }
-          }}
-          style={{
-            textAlign: 'left',
-            border: 'none',
-            background: 'transparent',
-            padding: '0.45rem 0.55rem',
-            borderRadius: '0.35rem',
-            cursor: 'pointer',
-            color: 'hsl(var(--foreground))',
-          }}
-        >
-          Export SVG
-        </button>
-      </div>
-    </details>
-  );
 
   return (
     <Layout>
@@ -525,7 +237,7 @@ function App() {
       </div>
 
       {!isModel2 ? (
-        <div style={twoColumnLayoutStyle}>
+        <div style={{ display: 'grid', gap: '2rem', gridTemplateColumns: '1fr 2fr' }}>
           <section>
             <Card title="Détails du donneur" description="Entrez les statistiques du donneur.">
               <div style={{ display: 'grid', gap: '1rem' }}>
@@ -678,31 +390,23 @@ function App() {
             </Card>
           </section>
 
-          <section style={stickyGraphColumnStyle}>
+          <section style={{ display: 'grid', gap: '2rem' }}>
             <Card
               title={`Projection de survie post-greffe - ${activeModel.name}`}
               description="Pourcentage de survie estimé au fil du temps."
             >
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                {renderExportMenu(model1ChartRef.current, 'modele-1-projection-survie')}
-              </div>
-              <div ref={model1ChartRef} style={{ height: '300px', width: '100%' }}>
+              <div style={{ height: '300px', width: '100%' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={survivalChartData}>
+                  <LineChart data={survivalData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                     <XAxis dataKey="year" label={{ value: 'Années post-greffe', position: 'insideBottom', offset: -5 }} />
                     <YAxis domain={[0, 100]} label={{ value: 'Survie %', angle: -90, position: 'insideLeft' }} />
                     <Tooltip
-                      content={activeTabId === 'model-1' ? renderModel1Tooltip : undefined}
-                      contentStyle={
-                        activeTabId === 'model-1'
-                          ? undefined
-                          : {
-                              backgroundColor: 'hsl(var(--card))',
-                              borderColor: 'hsl(var(--border))',
-                              borderRadius: 'var(--radius)',
-                            }
-                      }
+                      contentStyle={{
+                        backgroundColor: 'hsl(var(--card))',
+                        borderColor: 'hsl(var(--border))',
+                        borderRadius: 'var(--radius)',
+                      }}
                     />
                     <Line
                       type="monotone"
@@ -711,18 +415,6 @@ function App() {
                       strokeWidth={2}
                       dot={{ fill: 'hsl(var(--primary))' }}
                     />
-                    {activeTabId === 'model-1' && (
-                      <Line
-                        dataKey="redSurvival"
-                        type="monotone"
-                        stroke="#dc2626"
-                        strokeWidth={2}
-                        connectNulls={false}
-                        isAnimationActive={false}
-                        dot={{ fill: '#dc2626', r: 4 }}
-                        activeDot={{ fill: '#dc2626', r: 5 }}
-                      />
-                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -730,7 +422,7 @@ function App() {
           </section>
         </div>
       ) : (
-        <div style={twoColumnLayoutStyle}>
+        <div style={{ display: 'grid', gap: '2rem', gridTemplateColumns: '1fr 2fr' }}>
           <section>
             <Card title="Entrées du modèle 2" description="Entrez les champs du candidat.">
               <div style={{ display: 'grid', gap: '1rem' }}>
@@ -786,24 +478,23 @@ function App() {
             </Card>
           </section>
 
-          <section style={stickyGraphColumnStyle}>
+          <section style={{ display: 'grid', gap: '2rem' }}>
             <Card
               title="Distribution (histogramme) - Modèle 2"
               description="Histogramme aléatoire temporaire en attendant le vrai modèle."
             >
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                {renderExportMenu(model2ChartRef.current, 'modele-2-histogramme')}
-              </div>
-              <div ref={model2ChartRef} style={{ height: '300px', width: '100%' }}>
+              <div style={{ height: '300px', width: '100%' }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={model2Histogram}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                     <XAxis dataKey="intervalle" />
                     <YAxis />
-                    <ReferenceLine x="20-30" stroke="#dc2626" strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: '20%', fill: '#dc2626' }} />
-                    <ReferenceLine x="50-60" stroke="#dc2626" strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: '50%', fill: '#dc2626' }} />
                     <Tooltip
-                      content={renderModel2Tooltip}
+                      contentStyle={{
+                        backgroundColor: 'hsl(var(--card))',
+                        borderColor: 'hsl(var(--border))',
+                        borderRadius: 'var(--radius)',
+                      }}
                     />
                     <Bar dataKey="frequence" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                   </BarChart>
