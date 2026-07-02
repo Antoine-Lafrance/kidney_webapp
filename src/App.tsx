@@ -394,9 +394,9 @@ function App() {
 
     const freq = payload.find((entry: any) => entry.dataKey === 'frequence')?.value;
     const annotationByBin: Record<string, string> = {
-      '10-11': 'After 10 months, about 5% of waitlisted patients have received a transplant and about 2% have died.',
-      '20-21': 'After 20 months, about 10% of waitlisted patients have received a transplant and about 5% have died.',
-      '50-51': 'After 50 months, about 28% of waitlisted patients have received a transplant and about 14% have died.',
+      '10-11': "Après 10 mois, environ 5 % des patients en liste d'attente ont reçu une greffe et environ 2 % sont décédés.",
+      '20-21': "Après 20 mois, environ 10 % des patients en liste d'attente ont reçu une greffe et environ 5 % sont décédés.",
+      '50-51': "Après 50 mois, environ 28 % des patients en liste d'attente ont reçu une greffe et environ 14 % sont décédés.",
     };
 
     return (
@@ -411,8 +411,8 @@ function App() {
           gap: '0.35rem',
         }}
       >
-        <div style={{ fontWeight: 700 }}>{`Interval: ${label} months`}</div>
-        {typeof freq === 'number' && <div>{`Frequency: ${freq}`}</div>}
+        <div style={{ fontWeight: 700 }}>{`Intervalle : ${label} mois`}</div>
+        {typeof freq === 'number' && <div>{`Fréquence : ${freq}`}</div>}
         {annotationByBin[label as string] && (
           <div style={{ fontSize: '0.82rem', color: 'hsl(var(--muted-foreground))' }}>{annotationByBin[label as string]}</div>
         )}
