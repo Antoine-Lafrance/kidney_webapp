@@ -56,6 +56,19 @@ interface Model2Inputs {
   expiration_date: string | null;
 }
 
+interface KdriInputs {
+  age: number;
+  height: number;
+  weight: number;
+  is_black: boolean;
+  is_hypertension: boolean;
+  is_diabetes: boolean;
+  is_cva: boolean;
+  creatinine: number;
+  is_hcv_pos: boolean;
+  is_dcd: boolean;
+}
+
 interface HistogramBin {
   intervalle: string;
   frequence: number;
@@ -123,11 +136,27 @@ const createInitialModel2Inputs = (): Model2Inputs => ({
   expiration_date: null,
 });
 
+const createInitialKdriInputs = (): KdriInputs => ({
+  age: 45,
+  height: 170,
+  weight: 75,
+  is_black: false,
+  is_hypertension: false,
+  is_diabetes: false,
+  is_cva: false,
+  creatinine: 1,
+  is_hcv_pos: false,
+  is_dcd: false,
+});
+
 const createRandomHistogram = (): HistogramBin[] => {
-  const bins = ['0-10', '10-20', '20-30', '30-40', '40-50', '50-60', '60-70', '70-80', '80-90', '90-100'];
-  return bins.map((intervalle, index) => ({
+  const bins = Array.from({ length: 100 }, (_, index) => ({
+    intervalle: `${index}-${index + 1}`,
+    months: index,
+  }));
+  return bins.map(({ intervalle, months }) => ({
     intervalle,
-    months: index * 10,
+    months,
     frequence: Math.floor(Math.random() * 90) + 10,
   }));
 };
@@ -191,6 +220,11 @@ function App() {
     }, {}),
   );
   const [model2Inputs, setModel2Inputs] = useState<Model2Inputs>(createInitialModel2Inputs);
+  const [kdriByModel, setKdriByModel] = useState<Record<string, KdriInputs>>(() => ({
+    'model-1': createInitialKdriInputs(),
+    'model-2': createInitialKdriInputs(),
+    'model-3': createInitialKdriInputs(),
+  }));
   const [model2Histogram] = useState<HistogramBin[]>(() => createRandomHistogram());
   const [model1RedDots] = useState<SurvivalPoint[]>(() => createRandomModel1Dots());
   const model1ChartRef = useRef<HTMLDivElement | null>(null);
@@ -199,6 +233,8 @@ function App() {
   const activeStats = statsByModel[activeTabId];
   const activeModel = MODEL_TABS.find((tab) => tab.id === activeTabId) ?? MODEL_TABS[0];
   const isModel2 = activeTabId === 'model-2';
+  const isModel3 = activeTabId === 'model-3';
+  const isKdriEnabledModel = activeTabId === 'model-1' || activeTabId === 'model-2' || activeTabId === 'model-3';
   const isExpirationActive = model2Inputs.expiration_date === null;
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -250,6 +286,50 @@ function App() {
         [name]: value,
       };
     });
+  };
+
+  const handleKdriChange = (modelId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, type, checked, value } = e.target;
+    setKdriByModel((prev) => {
+      const nextKdriInputs = {
+        ...(prev[modelId] ?? createInitialKdriInputs()),
+        [name]: type === 'checkbox' ? checked : (parseFloat(value) || 0),
+      };
+
+      if (modelId === 'model-1' || modelId === 'model-3') {
+        const nextKdri = computeKdri(nextKdriInputs);
+        setStatsByModel((prevStats) => ({
+          ...prevStats,
+          [modelId]: {
+            ...(prevStats[modelId] ?? createInitialStats()),
+            KDRI_RAO: nextKdri,
+            AGE: nextKdriInputs.age,
+            HGT_CM_CALC: nextKdriInputs.height,
+          },
+        }));
+      }
+
+      return {
+        ...prev,
+        [modelId]: nextKdriInputs,
+      };
+    });
+  };
+
+  const computeKdri = (inputs: KdriInputs): number => {
+    const ageRisk = Math.max(0, inputs.age - 40) * 0.012 + Math.max(0, 18 - inputs.age) * 0.01;
+    const heightRisk = Math.max(0, 170 - inputs.height) * 0.003;
+    const weightRisk = Math.max(0, 80 - inputs.weight) * 0.0025;
+    const creatinineRisk = Math.max(0, inputs.creatinine - 1) * 0.18;
+    const binaryRisk =
+      (inputs.is_black ? 0.18 : 0) +
+      (inputs.is_hypertension ? 0.12 : 0) +
+      (inputs.is_diabetes ? 0.13 : 0) +
+      (inputs.is_cva ? 0.09 : 0) +
+      (inputs.is_hcv_pos ? 0.24 : 0) +
+      (inputs.is_dcd ? 0.14 : 0);
+    const score = Math.exp(ageRisk + heightRisk + weightRisk + creatinineRisk + binaryRisk);
+    return Number(score.toFixed(2));
   };
 
   const survivalData = useMemo(
@@ -314,8 +394,9 @@ function App() {
 
     const freq = payload.find((entry: any) => entry.dataKey === 'frequence')?.value;
     const annotationByBin: Record<string, string> = {
-      '20-30': 'After 20 months, about 10% of waitlisted patients have received a transplant and about 5% have died.',
-      '50-60': 'After 50 months, about 28% of waitlisted patients have received a transplant and about 14% have died.',
+      '10-11': 'After 10 months, about 5% of waitlisted patients have received a transplant and about 2% have died.',
+      '20-21': 'After 20 months, about 10% of waitlisted patients have received a transplant and about 5% have died.',
+      '50-51': 'After 50 months, about 28% of waitlisted patients have received a transplant and about 14% have died.',
     };
 
     return (
@@ -351,6 +432,19 @@ function App() {
     top: '6.5rem',
     alignSelf: 'start',
   };
+  const model3FormGridStyle: React.CSSProperties = {
+    display: 'grid',
+    gap: '0.85rem 1rem',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+    alignItems: 'end',
+  };
+  const kdriFieldsGridStyle: React.CSSProperties = {
+    display: 'grid',
+    gap: '0.75rem 1rem',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    alignItems: 'end',
+  };
+  const defaultFormStackStyle: React.CSSProperties = { display: 'grid', gap: '1rem' };
   const exportChartAsSvg = (container: HTMLDivElement | null, fileBaseName: string) => {
     const payload = getChartSvgPayload(container);
     if (!payload) {
@@ -482,6 +576,102 @@ function App() {
       </div>
     </details>
   );
+  const renderKdriSubsection = (modelId: string) => {
+    const kdriInputs = kdriByModel[modelId] ?? createInitialKdriInputs();
+    const kdri = computeKdri(kdriInputs);
+
+    return (
+      <div
+        style={{
+          border: '1px solid hsl(var(--border))',
+          borderRadius: 'var(--radius)',
+          padding: '1rem',
+          display: 'grid',
+          gap: '0.85rem',
+          backgroundColor: 'hsl(var(--muted) / 0.35)',
+        }}
+      >
+        <div style={{ display: 'grid', gap: '0.25rem' }}>
+          <strong>Calcul du KDRI du donneur</strong>
+          <span style={{ fontSize: '0.85rem', color: 'hsl(var(--muted-foreground))' }}>
+            Remplissez les caracteristiques du donneur ci-dessous. Le KDRI estime est calcule automatiquement.
+          </span>
+        </div>
+
+        <div style={kdriFieldsGridStyle}>
+          <Input
+            label="Age du donneur (ans)"
+            name="age"
+            type="number"
+            value={kdriInputs.age}
+            onChange={(e) => handleKdriChange(modelId, e)}
+          />
+          <Input
+            label="Taille du donneur (cm)"
+            name="height"
+            type="number"
+            value={kdriInputs.height}
+            onChange={(e) => handleKdriChange(modelId, e)}
+          />
+          <Input
+            label="Poids du donneur (kg)"
+            name="weight"
+            type="number"
+            value={kdriInputs.weight}
+            onChange={(e) => handleKdriChange(modelId, e)}
+          />
+          <Input
+            label="Creatinine serique (mg/dL)"
+            name="creatinine"
+            type="number"
+            step="0.1"
+            value={kdriInputs.creatinine}
+            onChange={(e) => handleKdriChange(modelId, e)}
+          />
+          <Checkbox
+            label="Le donneur est noir"
+            name="is_black"
+            checked={kdriInputs.is_black}
+            onChange={(e) => handleKdriChange(modelId, e)}
+          />
+          <Checkbox
+            label="Le donneur est hypertendu"
+            name="is_hypertension"
+            checked={kdriInputs.is_hypertension}
+            onChange={(e) => handleKdriChange(modelId, e)}
+          />
+          <Checkbox
+            label="Le donneur est diabetique"
+            name="is_diabetes"
+            checked={kdriInputs.is_diabetes}
+            onChange={(e) => handleKdriChange(modelId, e)}
+          />
+          <Checkbox
+            label="Cause de deces: AVC (CVA)"
+            name="is_cva"
+            checked={kdriInputs.is_cva}
+            onChange={(e) => handleKdriChange(modelId, e)}
+          />
+          <Checkbox
+            label="Donneur positif au VHC (HCV+)"
+            name="is_hcv_pos"
+            checked={kdriInputs.is_hcv_pos}
+            onChange={(e) => handleKdriChange(modelId, e)}
+          />
+          <Checkbox
+            label="Donneur apres deces circulatoire (DCD)"
+            name="is_dcd"
+            checked={kdriInputs.is_dcd}
+            onChange={(e) => handleKdriChange(modelId, e)}
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.65rem' }}>
+          <strong>{`KDRI estime: ${kdri.toFixed(2)}`}</strong>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <Layout>
@@ -525,25 +715,30 @@ function App() {
       </div>
 
       {!isModel2 ? (
-        <div style={twoColumnLayoutStyle}>
+        <div style={isModel3 ? { display: 'grid', gap: '1.25rem' } : twoColumnLayoutStyle}>
           <section>
             <Card title="Détails du donneur" description="Entrez les statistiques du donneur.">
-              <div style={{ display: 'grid', gap: '1rem' }}>
-                <Input
-                  label="Indice de risque du donneur rénal (RAO)"
-                  name="KDRI_RAO"
-                  type="number"
-                  value={activeStats.KDRI_RAO}
-                  onChange={handleInputChange}
-                />
-                <Input label="Âge" name="AGE" type="number" value={activeStats.AGE} onChange={handleInputChange} />
-                <Input
-                  label="Taille (cm)"
-                  name="HGT_CM_CALC"
-                  type="number"
-                  value={activeStats.HGT_CM_CALC}
-                  onChange={handleInputChange}
-                />
+              {isKdriEnabledModel && <div style={{ marginBottom: '1rem' }}>{renderKdriSubsection(activeTabId)}</div>}
+              <div style={isModel3 ? model3FormGridStyle : defaultFormStackStyle}>
+                {!isKdriEnabledModel && (
+                  <>
+                    <Input
+                      label="Indice de risque du donneur rénal (RAO)"
+                      name="KDRI_RAO"
+                      type="number"
+                      value={activeStats.KDRI_RAO}
+                      onChange={handleInputChange}
+                    />
+                    <Input label="Âge" name="AGE" type="number" value={activeStats.AGE} onChange={handleInputChange} />
+                    <Input
+                      label="Taille (cm)"
+                      name="HGT_CM_CALC"
+                      type="number"
+                      value={activeStats.HGT_CM_CALC}
+                      onChange={handleInputChange}
+                    />
+                  </>
+                )}
                 <Input
                   label="Indice de masse corporelle"
                   name="IMC"
@@ -592,7 +787,7 @@ function App() {
             </Card>
 
             <Card title="Détails du receveur" description="Entrez les statistiques du receveur.">
-              <div style={{ display: 'grid', gap: '1rem' }}>
+              <div style={isModel3 ? model3FormGridStyle : defaultFormStackStyle}>
                 <Select
                   label="Genre du receveur"
                   name="GENDER"
@@ -678,7 +873,7 @@ function App() {
             </Card>
           </section>
 
-          <section style={stickyGraphColumnStyle}>
+          <section style={isModel3 ? undefined : stickyGraphColumnStyle}>
             <Card
               title={`Projection de survie post-greffe - ${activeModel.name}`}
               description="Pourcentage de survie estimé au fil du temps."
@@ -733,6 +928,7 @@ function App() {
         <div style={twoColumnLayoutStyle}>
           <section>
             <Card title="Entrées du modèle 2" description="Entrez les champs du candidat.">
+              <div style={{ marginBottom: '1rem' }}>{renderKdriSubsection('model-2')}</div>
               <div style={{ display: 'grid', gap: '1rem' }}>
                 <Input label="Date de naissance" name="birth" type="date" value={model2Inputs.birth} onChange={handleModel2Change} />
                 <Input
@@ -800,8 +996,9 @@ function App() {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                     <XAxis dataKey="intervalle" />
                     <YAxis />
-                    <ReferenceLine x="20-30" stroke="#dc2626" strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: '20%', fill: '#dc2626' }} />
-                    <ReferenceLine x="50-60" stroke="#dc2626" strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: '50%', fill: '#dc2626' }} />
+                    <ReferenceLine x="10-11" stroke="#dc2626" strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: '10%', fill: '#dc2626' }} />
+                    <ReferenceLine x="20-21" stroke="#dc2626" strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: '20%', fill: '#dc2626' }} />
+                    <ReferenceLine x="50-51" stroke="#dc2626" strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: '50%', fill: '#dc2626' }} />
                     <Tooltip
                       content={renderModel2Tooltip}
                     />
@@ -818,3 +1015,5 @@ function App() {
 }
 
 export default App;
+
+
