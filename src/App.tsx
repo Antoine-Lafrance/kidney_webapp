@@ -106,6 +106,11 @@ interface Model2SimulationResponse {
 
 const MODEL_TAB_IDS = ["model-2", "model-4"] as const;
 
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ??
+  (import.meta.env.DEV ? "http://127.0.0.1:8000" : "/api")
+).replace(/\/$/, "");
+
 const getModelTabs = (language: Language): ModelTab[] => [
   {
     id: "model-2",
@@ -509,14 +514,12 @@ function App() {
 
     const modelId = activeTabId as (typeof patientSurvivalModelIds)[number];
     const payload = statsByModel[modelId];
-    const apiBaseUrl =
-      import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
     setIsPredictingByModel((prev) => ({ ...prev, [modelId]: true }));
     setPredictionErrorByModel((prev) => ({ ...prev, [modelId]: null }));
 
     try {
-      const response = await fetch(`${apiBaseUrl}/predict/patient`, {
+      const response = await fetch(`${API_BASE_URL}/predict/patient`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -551,13 +554,11 @@ function App() {
   };
 
   const handleModel2Simulation = async () => {
-    const apiBaseUrl =
-      import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
     setIsModel2Simulating(true);
     setModel2SimulationError(null);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/simulate/model2`, {
+      const response = await fetch(`${API_BASE_URL}/simulate/model2`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1749,3 +1750,4 @@ function App() {
 }
 
 export default App;
+
