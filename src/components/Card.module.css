@@ -1,4 +1,4 @@
-.card {
+﻿.card {
   background-color: hsl(var(--card));
   color: hsl(var(--card-foreground));
   border-radius: var(--radius);
@@ -12,6 +12,25 @@
   border-bottom: 1px solid hsl(var(--border));
 }
 
+.headerTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.headerLeft {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.headerRight {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
 .title {
   font-size: 1.5rem;
   font-weight: 600;
@@ -21,7 +40,7 @@
 .description {
   font-size: 0.875rem;
   color: hsl(var(--muted-foreground));
-  margin: 0.5rem 0 0 0;
+  margin: 0;
 }
 
 .content {

@@ -1,4 +1,4 @@
-.button {
+﻿.button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -45,6 +45,20 @@
 
 .ghost:hover {
   background-color: hsl(var(--accent));
+}
+
+.button:disabled {
+  background-color: #9ca3af;
+  color: #f9fafb;
+  cursor: not-allowed;
+  border-color: #9ca3af;
+}
+
+.primary:disabled:hover,
+.secondary:disabled:hover,
+.outline:disabled:hover,
+.ghost:disabled:hover {
+  background-color: #9ca3af;
 }
 
 .sm { padding: 0.25rem 0.5rem; font-size: 0.875rem; }

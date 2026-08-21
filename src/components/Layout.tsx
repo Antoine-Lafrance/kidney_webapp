@@ -1,26 +1,45 @@
-import React from "react";
+﻿import React from "react";
 import styles from "./Layout.module.css";
+
+type Language = "fr" | "en";
 
 interface LayoutProps {
   children: React.ReactNode;
+  language: Language;
+  onLanguageChange: (language: Language) => void;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children }) => {
+export const Layout: React.FC<LayoutProps> = ({ children, language, onLanguageChange }) => {
+  const title = language === "fr" ? "Visualisation de survie rénale" : "Kidney Survival Visualization";
+
   return (
     <div className={styles.wrapper}>
       <header className={styles.header}>
         <div className="container">
-          <h1 className={styles.logo}>Visualisation de survie rénale</h1>
+          <div className={styles.headerRow}>
+            <h1 className={styles.logo}>{title}</h1>
+            <div className={styles.languageSwitch} aria-label="Language switch">
+              <button
+                type="button"
+                className={language === "fr" ? styles.activeLanguage : styles.languageButton}
+                onClick={() => onLanguageChange("fr")}
+              >
+                FR
+              </button>
+              <button
+                type="button"
+                className={language === "en" ? styles.activeLanguage : styles.languageButton}
+                onClick={() => onLanguageChange("en")}
+              >
+                EN
+              </button>
+            </div>
+          </div>
         </div>
       </header>
       <main className={styles.main}>
         <div className="container">{children}</div>
       </main>
-      <footer className={styles.footer}>
-        <div className="container">
-          <p>&copy; 2026 Kidney Transplant Perspective Visualizer</p>
-        </div>
-      </footer>
     </div>
   );
 };
