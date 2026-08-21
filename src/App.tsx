@@ -15,7 +15,6 @@ import {
   Line,
   BarChart,
   Bar,
-  ReferenceLine,
 } from 'recharts';
 
 interface TransplantStats {
@@ -83,12 +82,23 @@ interface SurvivalPoint {
 interface SurvivalChartPoint {
   year: number;
   survival: number;
-  redSurvival?: number;
+  medianSurvival?: number;
 }
 
 interface ModelTab {
   id: string;
   name: string;
+}
+
+interface PredictionApiResponse {
+  risk_score: number;
+  survival_years: number[];
+  survival_probabilities: number[];
+}
+
+interface Model2SimulationResponse {
+  wait_times_months: number[];
+  num_simulations: number;
 }
 
 const MODEL_TABS: ModelTab[] = [
@@ -133,7 +143,7 @@ const createInitialModel2Inputs = (): Model2Inputs => ({
   dr1: '',
   dr2: '',
   cpra: 0,
-  expiration_date: null,
+  expiration_date: '',
 });
 
 const createInitialKdriInputs = (): KdriInputs => ({
@@ -149,29 +159,33 @@ const createInitialKdriInputs = (): KdriInputs => ({
   is_dcd: false,
 });
 
-const createRandomHistogram = (): HistogramBin[] => {
+const waitTimesToHistogram = (waitTimes: number[]): HistogramBin[] => {
   const bins = Array.from({ length: 100 }, (_, index) => ({
     intervalle: `${index}-${index + 1}`,
     months: index,
+    frequence: 0,
   }));
-  return bins.map(({ intervalle, months }) => ({
-    intervalle,
-    months,
-    frequence: Math.floor(Math.random() * 90) + 10,
-  }));
+
+  for (const waitTime of waitTimes) {
+    const monthIndex = Math.max(0, Math.min(99, Math.floor(waitTime)));
+    bins[monthIndex].frequence += 1;
+  }
+
+  return bins;
 };
 
-const createRandomModel1Dots = (): SurvivalPoint[] => {
-  const years = [1, 3, 5, 10];
-  let current = Math.floor(Math.random() * 9) + 88;
-  return years.map((year, index) => {
-    if (index > 0) {
-      const drop = Math.floor(Math.random() * 6) + 2;
-      current = Math.max(30, current - drop);
-    }
-    return { year, survival: current };
-  });
-};
+const MEDIAN_PAIR_SURVIVAL_CURVE: SurvivalPoint[] = [
+  { year: 1, survival: 98.4 },
+  { year: 2, survival: 97.6 },
+  { year: 3, survival: 97.5 },
+  { year: 4, survival: 96.9 },
+  { year: 5, survival: 94.5 },
+  { year: 6, survival: 92.8 },
+  { year: 7, survival: 92.3 },
+  { year: 8, survival: 92.3 },
+  { year: 9, survival: 88.6 },
+  { year: 10, survival: 83.0 },
+];
 
 const downloadBlob = (blob: Blob, fileName: string) => {
   const url = URL.createObjectURL(blob);
@@ -211,6 +225,14 @@ const getChartSvgPayload = (container: HTMLDivElement | null) => {
   return { svgText, width, height };
 };
 
+const patientSurvivalModelIds = ['model-1', 'model-3'] as const;
+
+const buildSurvivalPointsFromApi = (data: PredictionApiResponse): SurvivalPoint[] =>
+  data.survival_years.map((year, index) => ({
+    year,
+    survival: Math.max(0, Math.min(100, Number((data.survival_probabilities[index] * 100).toFixed(1)))),
+  }));
+
 function App() {
   const [activeTabId, setActiveTabId] = useState<string>(MODEL_TABS[0].id);
   const [statsByModel, setStatsByModel] = useState<Record<string, TransplantStats>>(() =>
@@ -225,8 +247,26 @@ function App() {
     'model-2': createInitialKdriInputs(),
     'model-3': createInitialKdriInputs(),
   }));
-  const [model2Histogram] = useState<HistogramBin[]>(() => createRandomHistogram());
-  const [model1RedDots] = useState<SurvivalPoint[]>(() => createRandomModel1Dots());
+  const [predictedRiskByModel, setPredictedRiskByModel] = useState<Record<string, number | null>>({
+    'model-1': null,
+    'model-3': null,
+  });
+  const [apiSurvivalByModel, setApiSurvivalByModel] = useState<Record<string, SurvivalPoint[]>>({
+    'model-1': [],
+    'model-3': [],
+  });
+  const [isPredictingByModel, setIsPredictingByModel] = useState<Record<string, boolean>>({
+    'model-1': false,
+    'model-3': false,
+  });
+  const [predictionErrorByModel, setPredictionErrorByModel] = useState<Record<string, string | null>>({
+    'model-1': null,
+    'model-3': null,
+  });
+  const [model2Histogram, setModel2Histogram] = useState<HistogramBin[]>([]);
+  const [model2WaitTimes, setModel2WaitTimes] = useState<number[]>([]);
+  const [isModel2Simulating, setIsModel2Simulating] = useState<boolean>(false);
+  const [model2SimulationError, setModel2SimulationError] = useState<string | null>(null);
   const model1ChartRef = useRef<HTMLDivElement | null>(null);
   const model2ChartRef = useRef<HTMLDivElement | null>(null);
 
@@ -235,6 +275,8 @@ function App() {
   const isModel2 = activeTabId === 'model-2';
   const isModel3 = activeTabId === 'model-3';
   const isKdriEnabledModel = activeTabId === 'model-1' || activeTabId === 'model-2' || activeTabId === 'model-3';
+  const isPatientSurvivalModel =
+    patientSurvivalModelIds.includes(activeTabId as (typeof patientSurvivalModelIds)[number]);
   const isExpirationActive = model2Inputs.expiration_date === null;
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -332,33 +374,108 @@ function App() {
     return Number(score.toFixed(2));
   };
 
+  const handlePatientProjectionUpdate = async () => {
+    if (!isPatientSurvivalModel) {
+      return;
+    }
+
+    const modelId = activeTabId as (typeof patientSurvivalModelIds)[number];
+    const payload = statsByModel[modelId];
+    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
+
+    setIsPredictingByModel((prev) => ({ ...prev, [modelId]: true }));
+    setPredictionErrorByModel((prev) => ({ ...prev, [modelId]: null }));
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/predict/patient`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Prediction request failed');
+      }
+
+      const data = (await response.json()) as PredictionApiResponse;
+      setPredictedRiskByModel((prev) => ({ ...prev, [modelId]: data.risk_score }));
+      setApiSurvivalByModel((prev) => ({
+        ...prev,
+        [modelId]: buildSurvivalPointsFromApi(data),
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setPredictionErrorByModel((prev) => ({ ...prev, [modelId]: message }));
+    } finally {
+      setIsPredictingByModel((prev) => ({ ...prev, [modelId]: false }));
+    }
+  };
+
+  const handleModel2Simulation = async () => {
+    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
+    setIsModel2Simulating(true);
+    setModel2SimulationError(null);
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/simulate/model2`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...model2Inputs,
+          num_simulations: 100,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Simulation request failed');
+      }
+
+      const data = (await response.json()) as Model2SimulationResponse;
+      setModel2WaitTimes(data.wait_times_months);
+      setModel2Histogram(waitTimesToHistogram(data.wait_times_months));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setModel2SimulationError(message);
+    } finally {
+      setIsModel2Simulating(false);
+    }
+  };
+
   const survivalData = useMemo(
-    () => [
-      { year: 1, survival: 95 - activeStats.AGE * 0.1 },
-      { year: 3, survival: 90 - activeStats.AGE * 0.15 },
-      { year: 5, survival: 85 - activeStats.AGE * 0.2 },
-      { year: 10, survival: 75 - activeStats.AGE * 0.3 },
-    ],
-    [activeStats.AGE],
+    () => {
+      if (isPatientSurvivalModel && apiSurvivalByModel[activeTabId]?.length) {
+        return apiSurvivalByModel[activeTabId];
+      }
+
+      return [
+        { year: 1, survival: 95 - activeStats.AGE * 0.1 },
+        { year: 3, survival: 90 - activeStats.AGE * 0.15 },
+        { year: 5, survival: 85 - activeStats.AGE * 0.2 },
+        { year: 10, survival: 75 - activeStats.AGE * 0.3 },
+      ];
+    },
+    [activeStats.AGE, activeTabId, apiSurvivalByModel, isPatientSurvivalModel],
   );
   const survivalChartData = useMemo<SurvivalChartPoint[]>(
     () =>
       survivalData.map((point) => ({
         ...point,
-        redSurvival:
-          activeTabId === 'model-1'
-            ? model1RedDots.find((redPoint) => redPoint.year === point.year)?.survival
+        medianSurvival:
+          activeTabId === 'model-1' || activeTabId === 'model-3'
+            ? MEDIAN_PAIR_SURVIVAL_CURVE.find((medianPoint) => medianPoint.year === point.year)?.survival
             : undefined,
       })),
-    [activeTabId, model1RedDots, survivalData],
+    [activeTabId, survivalData],
   );
   const renderModel1Tooltip = ({ active, payload, label }: any) => {
     if (!active || !payload || !payload.length) {
       return null;
     }
 
-    const givenDonor = payload.find((entry: any) => entry.dataKey === 'redSurvival')?.value;
-    const medianDonor = payload.find((entry: any) => entry.dataKey === 'survival')?.value;
+    const selectedPair = payload.find((entry: any) => entry.dataKey === 'survival')?.value;
+    const medianPair = payload.find((entry: any) => entry.dataKey === 'medianSurvival')?.value;
     const yearLabel = Number(label) === 1 ? 'année' : 'années';
 
     return (
@@ -374,14 +491,14 @@ function App() {
         }}
       >
         <div style={{ fontWeight: 700 }}>{`${label} ${yearLabel} post-greffe`}</div>
-        {typeof givenDonor === 'number' && (
-          <div style={{ color: '#dc2626' }}>{`Survie estimée après ${label} ${yearLabel}: ${givenDonor.toFixed(1)}%`}</div>
+        {typeof selectedPair === 'number' && (
+          <div>{`Survie estimée après ${label} ${yearLabel} (profil saisi): ${selectedPair.toFixed(1)}%`}</div>
         )}
-        {typeof medianDonor === 'number' && (
-          <div>{`Survie moyenne estimée pour un donneur médian: ${medianDonor.toFixed(1)}%`}</div>
+        {typeof medianPair === 'number' && (
+          <div style={{ color: '#dc2626' }}>{`Survie estimée pour la paire médiane: ${medianPair.toFixed(1)}%`}</div>
         )}
         <div style={{ fontSize: '0.82rem', color: 'hsl(var(--muted-foreground))', marginTop: '0.2rem' }}>
-          Lecture simple: la ligne rouge représente le donneur saisi, la ligne noire un donneur "typique". Plus le
+          Lecture simple: la ligne rouge représente la paire médiane de cohorte, l'autre ligne correspond au profil saisi. Plus le
           pourcentage est élevé, meilleures sont les chances de survie à ce moment.
         </div>
       </div>
@@ -868,7 +985,23 @@ function App() {
                   checked={activeStats.EBV_MM}
                   onChange={handleInputChange}
                 />
-                <Button style={{ marginTop: '0.5rem' }}>Mettre à jour les projections</Button>
+                <Button
+                  style={{ marginTop: '0.5rem' }}
+                  onClick={handlePatientProjectionUpdate}
+                  disabled={!isPatientSurvivalModel || isPredictingByModel[activeTabId]}
+                >
+                  {isPredictingByModel[activeTabId] ? 'Mise à jour...' : 'Mettre à jour les projections'}
+                </Button>
+                {isPatientSurvivalModel && predictedRiskByModel[activeTabId] !== null && (
+                  <div style={{ fontSize: '0.9rem', color: 'hsl(var(--muted-foreground))' }}>
+                    {`Score de risque (API): ${predictedRiskByModel[activeTabId]?.toFixed(3)}`}
+                  </div>
+                )}
+                {isPatientSurvivalModel && predictionErrorByModel[activeTabId] && (
+                  <div style={{ fontSize: '0.9rem', color: '#dc2626' }}>
+                    {`Erreur API: ${predictionErrorByModel[activeTabId]}`}
+                  </div>
+                )}
               </div>
             </Card>
           </section>
@@ -906,9 +1039,9 @@ function App() {
                       strokeWidth={2}
                       dot={{ fill: 'hsl(var(--primary))' }}
                     />
-                    {activeTabId === 'model-1' && (
+                    {(activeTabId === 'model-1' || activeTabId === 'model-3') && (
                       <Line
-                        dataKey="redSurvival"
+                        dataKey="medianSurvival"
                         type="monotone"
                         stroke="#dc2626"
                         strokeWidth={2}
@@ -978,6 +1111,17 @@ function App() {
                   onChange={handleModel2Change}
                   disabled={isExpirationActive}
                 />
+                <Button onClick={handleModel2Simulation} disabled={isModel2Simulating}>
+                  {isModel2Simulating ? 'Simulation en cours...' : 'Lancer 100 simulations'}
+                </Button>
+                {model2SimulationError && (
+                  <div style={{ fontSize: '0.9rem', color: '#dc2626' }}>{`Erreur API: ${model2SimulationError}`}</div>
+                )}
+                {!model2SimulationError && model2WaitTimes.length > 0 && (
+                  <div style={{ fontSize: '0.9rem', color: 'hsl(var(--muted-foreground))' }}>
+                    {`${model2WaitTimes.length} temps d'attente simulés reçus.`}
+                  </div>
+                )}
               </div>
             </Card>
           </section>
@@ -985,26 +1129,39 @@ function App() {
           <section style={stickyGraphColumnStyle}>
             <Card
               title="Distribution (histogramme) - Modèle 2"
-              description="Histogramme aléatoire temporaire en attendant le vrai modèle."
+              description="Histogramme des temps d'attente simulés (en mois)."
             >
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 {renderExportMenu(model2ChartRef.current, 'modele-2-histogramme')}
               </div>
-              <div ref={model2ChartRef} style={{ height: '300px', width: '100%' }}>
+              <div ref={model2ChartRef} style={{ height: '300px', width: '100%', position: 'relative' }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={model2Histogram}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                     <XAxis dataKey="intervalle" />
                     <YAxis />
-                    <ReferenceLine x="10-11" stroke="#dc2626" strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: '10%', fill: '#dc2626' }} />
-                    <ReferenceLine x="20-21" stroke="#dc2626" strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: '20%', fill: '#dc2626' }} />
-                    <ReferenceLine x="50-51" stroke="#dc2626" strokeDasharray="4 4" ifOverflow="extendDomain" label={{ value: '50%', fill: '#dc2626' }} />
                     <Tooltip
                       content={renderModel2Tooltip}
                     />
                     <Bar dataKey="frequence" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
+                {model2WaitTimes.length === 0 && !isModel2Simulating && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'grid',
+                      placeItems: 'center',
+                      padding: '0 1.25rem',
+                      textAlign: 'center',
+                      color: 'hsl(var(--muted-foreground))',
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    mettez à jour les données pour voir la distribution des temps d'attente
+                  </div>
+                )}
               </div>
             </Card>
           </section>
