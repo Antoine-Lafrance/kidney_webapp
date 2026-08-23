@@ -2,10 +2,6 @@
 
 export default async function handler(req, res) {
   try {
-    const pathParam = req.query.path;
-    const path = Array.isArray(pathParam) ? pathParam.join("/") : pathParam || "";
-    const targetUrl = `${BACKEND_BASE_URL}/${path}`;
-
     const headers = { ...req.headers };
     delete headers.host;
     delete headers.connection;
@@ -17,7 +13,7 @@ export default async function handler(req, res) {
       ? (typeof req.body === "string" ? req.body : JSON.stringify(req.body))
       : undefined;
 
-    const response = await fetch(targetUrl, {
+    const response = await fetch(`${BACKEND_BASE_URL}/predict/patient`, {
       method,
       headers,
       body,
