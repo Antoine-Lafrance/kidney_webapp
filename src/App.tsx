@@ -370,8 +370,6 @@ function App() {
   const model2ChartRef = useRef<HTMLDivElement | null>(null);
 
   const activeStats = statsByModel[activeTabId];
-  const activeModel =
-    modelTabs.find((tab) => tab.id === activeTabId) ?? modelTabs[0];
   const isModel2 = activeTabId === "model-2";
   const isModel3 = activeTabId === "model-3";
   const isKdriEnabledModel =
