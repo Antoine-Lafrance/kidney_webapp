@@ -38,7 +38,7 @@ interface TransplantStats {
   MALIG: boolean;
   MM: string;
   CMV_MM: string;
-  EBV_MM: boolean;
+  EBV_MM: string;
 }
 
 interface Model2Inputs {
@@ -53,7 +53,6 @@ interface Model2Inputs {
   dr1: string;
   dr2: string;
   cpra: number | "";
-  expiration_date: string | null;
 }
 
 interface KdriInputs {
@@ -87,6 +86,60 @@ interface SurvivalChartPoint {
 }
 
 type Language = "fr" | "en";
+
+type SerologyStatus = "" | "positive" | "negative" | "unknown";
+
+interface Model4SerologyInputs {
+  donorCmv: SerologyStatus;
+  recipientCmv: SerologyStatus;
+  donorEbv: SerologyStatus;
+  recipientEbv: SerologyStatus;
+}
+
+const deriveCmvLevel = (
+  donorCmv: SerologyStatus,
+  recipientCmv: SerologyStatus,
+): string => {
+  if (!donorCmv || !recipientCmv) {
+    return "";
+  }
+
+  if (donorCmv === "positive" && recipientCmv === "negative") {
+    return "Élevé";
+  }
+
+  if (donorCmv === "negative" && recipientCmv === "negative") {
+    return "Faible";
+  }
+
+  return "Moyen";
+};
+
+const deriveEbvLevel = (
+  donorEbv: SerologyStatus,
+  recipientEbv: SerologyStatus,
+): string => {
+  if (!donorEbv || !recipientEbv) {
+    return "";
+  }
+
+  if (
+    recipientEbv === "unknown" ||
+    (recipientEbv === "negative" && donorEbv === "unknown")
+  ) {
+    return "Inconnu";
+  }
+
+  if (donorEbv === "positive" && recipientEbv === "negative") {
+    return "Élevé";
+  }
+
+  if (recipientEbv === "positive") {
+    return "Faible";
+  }
+
+  return "Moyen";
+};
 
 interface ModelTab {
   id: string;
@@ -148,7 +201,7 @@ const createInitialStats = (): TransplantStats => ({
   MALIG: false,
   MM: "",
   CMV_MM: "",
-  EBV_MM: false,
+  EBV_MM: "",
 });
 
 const createInitialModel2Inputs = (): Model2Inputs => ({
@@ -163,7 +216,6 @@ const createInitialModel2Inputs = (): Model2Inputs => ({
   dr1: "",
   dr2: "",
   cpra: "",
-  expiration_date: "",
 });
 
 const createInitialKdriInputs = (): KdriInputs => ({
@@ -308,6 +360,12 @@ function App() {
   const [model2SimulationError, setModel2SimulationError] = useState<
     string | null
   >(null);
+  const [model4Serology, setModel4Serology] = useState<Model4SerologyInputs>({
+    donorCmv: "",
+    recipientCmv: "",
+    donorEbv: "",
+    recipientEbv: "",
+  });
   const model1ChartRef = useRef<HTMLDivElement | null>(null);
   const model2ChartRef = useRef<HTMLDivElement | null>(null);
 
@@ -321,7 +379,6 @@ function App() {
   const isPatientSurvivalModel = patientSurvivalModelIds.includes(
     activeTabId as (typeof patientSurvivalModelIds)[number],
   );
-  const isExpirationActive = model2Inputs.expiration_date === null;
   const isFiniteNumber = (value: number | ""): value is number =>
     typeof value === "number" && Number.isFinite(value);
   const isNonEmptyString = (value: string | null | undefined) =>
@@ -348,8 +405,6 @@ function App() {
       stats.AGE > 0 &&
       isFiniteNumber(stats.HGT_CM_CALC) &&
       stats.HGT_CM_CALC > 0 &&
-      isFiniteNumber(stats.IMC) &&
-      stats.IMC > 0 &&
       isFiniteNumber(stats.TIME_ON_DIALYSIS) &&
       stats.TIME_ON_DIALYSIS >= 0 &&
       isFiniteNumber(stats.PRA_PRE) &&
@@ -357,13 +412,39 @@ function App() {
       stats.PRA_PRE <= 100 &&
       isNonEmptyString(stats.GENDER_DON) &&
       isNonEmptyString(stats.GENDER) &&
-      isNonEmptyString(stats.ETHCAT) &&
       isNonEmptyString(stats.DIAG_KI) &&
       isNonEmptyString(stats.MM) &&
       isNonEmptyString(stats.CMV_MM) &&
+      isNonEmptyString(stats.EBV_MM) &&
       isKdriValid("model-4")
     );
   }, [kdriByModel, statsByModel]);
+
+  const model2SummaryStats = useMemo(() => {
+    if (model2WaitTimes.length === 0) {
+      return null;
+    }
+
+    const sorted = [...model2WaitTimes].sort((a, b) => a - b);
+    const quantile = (q: number) => {
+      const index = (sorted.length - 1) * q;
+      const lower = Math.floor(index);
+      const upper = Math.ceil(index);
+      if (lower === upper) {
+        return sorted[lower];
+      }
+      const weight = index - lower;
+      return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+    };
+
+    return {
+      median: quantile(0.5),
+      q1: quantile(0.25),
+      q3: quantile(0.75),
+      min: sorted[0],
+      max: sorted[sorted.length - 1],
+    };
+  }, [model2WaitTimes]);
 
   const isModel2FormValid = useMemo(() => {
     return (
@@ -380,10 +461,10 @@ function App() {
       isFiniteNumber(model2Inputs.cpra) &&
       model2Inputs.cpra >= 0 &&
       model2Inputs.cpra <= 100 &&
-      (isExpirationActive || isNonEmptyString(model2Inputs.expiration_date)) &&
+
       isKdriValid("model-2")
     );
-  }, [isExpirationActive, kdriByModel, model2Inputs]);
+  }, [kdriByModel, model2Inputs]);
 
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
@@ -407,20 +488,45 @@ function App() {
     }));
   };
 
+  const handleModel4SerologyChange = (
+    field: keyof Model4SerologyInputs,
+    value: SerologyStatus,
+  ) => {
+    setModel4Serology((prev) => {
+      const next = { ...prev, [field]: value };
+      const nextCmvLevel = deriveCmvLevel(next.donorCmv, next.recipientCmv);
+      const nextEbvLevel = deriveEbvLevel(next.donorEbv, next.recipientEbv);
+
+      setStatsByModel((prevStats) => ({
+        ...prevStats,
+        "model-4": {
+          ...(prevStats["model-4"] ?? createInitialStats()),
+          CMV_MM: nextCmvLevel,
+          EBV_MM: nextEbvLevel,
+        },
+      }));
+
+      return next;
+    });
+  };
+
+  const handleModel4AfroDescendantChange = (checked: boolean) => {
+    setStatsByModel((prev) => ({
+      ...prev,
+      "model-4": {
+        ...(prev["model-4"] ?? createInitialStats()),
+        ETHCAT: checked ? "Afro-American" : "Other",
+      },
+    }));
+  };
+
   const handleModel2Change = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
   ) => {
     const target = e.target as HTMLInputElement;
-    const { name, value, type, checked } = target;
+    const { name, value } = target;
 
     setModel2Inputs((prev) => {
-      if (type === "checkbox" && name === "expiration_active") {
-        return {
-          ...prev,
-          expiration_date: checked ? null : "",
-        };
-      }
-
       if (name === "cpra") {
         const parsed = parseInt(value, 10);
         const cpra =
@@ -432,10 +538,6 @@ function App() {
 
       if (name === "blood") {
         return { ...prev, blood: value as Model2Inputs["blood"] };
-      }
-
-      if (name === "expiration_date") {
-        return { ...prev, expiration_date: value || "" };
       }
 
       return {
@@ -514,6 +616,20 @@ function App() {
 
     const modelId = activeTabId as (typeof patientSurvivalModelIds)[number];
     const payload = statsByModel[modelId];
+    const kdriInputs = kdriByModel["model-4"] ?? createInitialKdriInputs();
+    const ebvLevel = deriveEbvLevel(
+      model4Serology.donorEbv,
+      model4Serology.recipientEbv,
+    );
+    const payloadForApi = {
+      ...payload,
+      IMC: isFiniteNumber(payload.IMC)
+        ? payload.IMC
+        : isFiniteNumber(kdriInputs.weight)
+          ? kdriInputs.weight
+          : 0,
+      EBV_MM: ebvLevel === "Élevé",
+    };
 
     setIsPredictingByModel((prev) => ({ ...prev, [modelId]: true }));
     setPredictionErrorByModel((prev) => ({ ...prev, [modelId]: null }));
@@ -522,7 +638,7 @@ function App() {
       const response = await fetch(`${API_BASE_URL}/predict/patient`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(payloadForApi),
       });
 
       if (!response.ok) {
@@ -638,12 +754,12 @@ function App() {
           style={{ fontWeight: 700 }}
         >{`${label} ${yearLabel} post-greffe`}</div>
         {typeof selectedPair === "number" && (
-          <div>{`Survie estimée après ${label} ${yearLabel} (profil saisi): ${selectedPair.toFixed(1)}%`}</div>
+          <div>{`La probabilité d'être vivant avec un rein fonctionnel (profil saisi): ${selectedPair.toFixed(1)}%`}</div>
         )}
         {typeof medianPair === "number" && (
           <div
             style={{ color: "#dc2626" }}
-          >{`Survie estimée pour la paire médiane: ${medianPair.toFixed(1)}%`}</div>
+          >{`La probabilité d'être vivant avec un rein fonctionnel (paire médiane): ${medianPair.toFixed(1)}%`}</div>
         )}
         <div
           style={{
@@ -669,11 +785,11 @@ function App() {
     )?.value;
     const annotationByBin: Record<string, string> = {
       "10-11":
-        "Après 10 mois, environ 5 % des patients en liste d'attente ont reÃ§u une greffe et environ 2 % sont décédés.",
+        "Après 10 mois, environ 5 % des patients en liste d'attente ont reçu une greffe et environ 2 % sont décédés.",
       "20-21":
-        "Après 20 mois, environ 10 % des patients en liste d'attente ont reÃ§u une greffe et environ 5 % sont décédés.",
+        "Après 20 mois, environ 10 % des patients en liste d'attente ont reçu une greffe et environ 5 % sont décédés.",
       "50-51":
-        "Après 50 mois, environ 28 % des patients en liste d'attente ont reÃ§u une greffe et environ 14 % sont décédés.",
+        "Après 50 mois, environ 28 % des patients en liste d'attente ont reçu une greffe et environ 14 % sont décédés.",
     };
 
     return (
@@ -914,7 +1030,7 @@ function App() {
             }}
           >
             {language === "fr"
-              ? "Renseignez les variables du donneur ci-dessous. La créatinine est saisie en µmol/L et convertie en mg/dL dans le modèle (mg/dL = µmol/L ÷ 88)."
+              ? "Entrez les variables du donneur ci-dessous. La créatinine est saisie en µmol/L et convertie en mg/dL dans le modèle (mg/dL = µmol/L ÷ 88)."
               : "Enter the donor variables below. Serum creatinine is entered in µmol/L and converted to mg/dL in the model (mg/dL = µmol/L ÷ 88)."}
           </span>
         </div>
@@ -954,7 +1070,7 @@ function App() {
             onChange={(e) => handleKdriChange(modelId, e)}
           />
           <Checkbox
-            label={language === "fr" ? "Origine ethnique" : "Ethnicity"}
+            label={language === "fr" ? "Descendance afro-américaine" : "African-American ancestry"}
             name="is_black"
             checked={kdriInputs.is_black}
             onChange={(e) => handleKdriChange(modelId, e)}
@@ -974,7 +1090,7 @@ function App() {
           <Checkbox
             label={
               language === "fr"
-                ? "Cause du décès (AVC/CVA)"
+                ? "Décès par accident vasculaire cérébral"
                 : "Cause of Death (CVA)"
             }
             name="is_cva"
@@ -984,7 +1100,7 @@ function App() {
           <Checkbox
             label={
               language === "fr"
-                ? "Sérologie pour l'hépatite C"
+                ? "Sérologie pour l'hépatite C positivie"
                 : "Hepatitis C Serology"
             }
             name="is_hcv_pos"
@@ -1013,7 +1129,7 @@ function App() {
         >
           <strong>
             {language === "fr"
-              ? `KDRI estim?: ${typeof kdri === "number" ? kdri.toFixed(2) : "?"}`
+              ? `KDRI estimé: ${typeof kdri === "number" ? kdri.toFixed(2) : "?"}`
               : `Estimated KDRI: ${typeof kdri === "number" ? kdri.toFixed(2) : "?"}`}
           </strong>
         </div>
@@ -1126,39 +1242,6 @@ function App() {
                     />
                   </>
                 )}
-                <Input
-                  label={
-                    language === "fr"
-                      ? "Poids (via IMC, kg/m²)"
-                      : "Weight (via BMI, kg/m²)"
-                  }
-                  name="IMC"
-                  type="number"
-                  value={activeStats.IMC}
-                  onChange={handleInputChange}
-                />
-                <Input
-                  label={
-                    language === "fr"
-                      ? "Temps passé en dialyse (mois)"
-                      : "Time on dialysis (months)"
-                  }
-                  name="TIME_ON_DIALYSIS"
-                  type="number"
-                  value={activeStats.TIME_ON_DIALYSIS}
-                  onChange={handleInputChange}
-                />
-                <Input
-                  label={
-                    language === "fr"
-                      ? "Pourcentage d'anticorps pré-formés le plus récent (cPRA, %)"
-                      : "Most recent percentage of pre-formed antibodies (cPRA, %)"
-                  }
-                  name="PRA_PRE"
-                  type="number"
-                  value={activeStats.PRA_PRE}
-                  onChange={handleInputChange}
-                />
                 <Select
                   label={language === "fr" ? "Sexe" : "Sex"}
                   name="GENDER_DON"
@@ -1197,6 +1280,66 @@ function App() {
                   name="COCAINE_DON"
                   checked={activeStats.COCAINE_DON}
                   onChange={handleInputChange}
+                />
+                <Select
+                  label={
+                    language === "fr"
+                      ? "Sérologie pour le CMV du donneur (positif/négatif)"
+                      : "Donor CMV serology (positive/negative)"
+                  }
+                  value={model4Serology.donorCmv}
+                  onChange={(e) =>
+                    handleModel4SerologyChange(
+                      "donorCmv",
+                      e.target.value as SerologyStatus,
+                    )
+                  }
+                  options={[
+                    {
+                      value: "",
+                      label: language === "fr" ? "Sélectionner…" : "Select…",
+                    },
+                    {
+                      value: "positive",
+                      label: language === "fr" ? "Positif" : "Positive",
+                    },
+                    {
+                      value: "negative",
+                      label: language === "fr" ? "Négatif" : "Negative",
+                    },
+                  ]}
+                />
+                <Select
+                  label={
+                    language === "fr"
+                      ? "Sérologie pour l'EBV du donneur (positif/négatif/inconnu)"
+                      : "Donor EBV serology (positive/negative/unknown)"
+                  }
+                  value={model4Serology.donorEbv}
+                  onChange={(e) =>
+                    handleModel4SerologyChange(
+                      "donorEbv",
+                      e.target.value as SerologyStatus,
+                    )
+                  }
+                  options={[
+                    {
+                      value: "",
+                      label: language === "fr" ? "Sélectionner…" : "Select…",
+                    },
+                    {
+                      value: "positive",
+                      label: language === "fr" ? "Positif" : "Positive",
+                    },
+                    {
+                      value: "negative",
+                      label: language === "fr" ? "Négatif" : "Negative",
+                    },
+                    {
+                      value: "unknown",
+                      label: language === "fr" ? "Inconnu" : "Unknown",
+                    },
+                  ]}
                 />
               </div>
             </Card>
@@ -1241,40 +1384,17 @@ function App() {
                     },
                   ]}
                 />
-                <Select
+                <Checkbox
                   label={
-                    language === "fr" ? "Origine ethnique" : "Ethnic origin"
+                    language === "fr"
+                      ? "Descendance afro-américaine"
+                      : "African-American ancestry"
                   }
-                  name="ETHCAT"
-                  required
-                  value={activeStats.ETHCAT}
-                  onChange={handleInputChange}
-                  options={[
-                    {
-                      value: "",
-                      label: language === "fr" ? "Sélectionner…" : "Select…",
-                    },
-                    {
-                      value: "Blanc",
-                      label: language === "fr" ? "Blanc" : "White",
-                    },
-                    {
-                      value: "Noir",
-                      label: language === "fr" ? "Noir" : "Black",
-                    },
-                    {
-                      value: "Asiatique",
-                      label: language === "fr" ? "Asiatique" : "Asian",
-                    },
-                    {
-                      value: "Hispanique",
-                      label: language === "fr" ? "Hispanique" : "Hispanic",
-                    },
-                    {
-                      value: "Autre",
-                      label: language === "fr" ? "Autre" : "Other",
-                    },
-                  ]}
+                  name="ETHCAT_AFRO"
+                  checked={activeStats.ETHCAT === "Afro-American"}
+                  onChange={(e) =>
+                    handleModel4AfroDescendantChange(e.target.checked)
+                  }
                 />
                 <Select
                   label={
@@ -1327,6 +1447,28 @@ function App() {
                     },
                   ]}
                 />
+                <Input
+                  label={
+                    language === "fr"
+                      ? "Temps passé en dialyse (mois)"
+                      : "Time on dialysis (months)"
+                  }
+                  name="TIME_ON_DIALYSIS"
+                  type="number"
+                  value={activeStats.TIME_ON_DIALYSIS}
+                  onChange={handleInputChange}
+                />
+                <Input
+                  label={
+                    language === "fr"
+                      ? "Pourcentage d'anticorps pré-formés le plus récent (cPRA, %)"
+                      : "Most recent percentage of pre-formed antibodies (cPRA, %)"
+                  }
+                  name="PRA_PRE"
+                  type="number"
+                  value={activeStats.PRA_PRE}
+                  onChange={handleInputChange}
+                />
                 <Checkbox
                   label={language === "fr" ? "Diabète" : "Diabetes"}
                   name="DIAB"
@@ -1344,13 +1486,19 @@ function App() {
                   onChange={handleInputChange}
                 />
                 <Checkbox
-                  label={language === "fr" ? "Sérologie HCV" : "HCV serology"}
+                  label={
+                    language === "fr"
+                      ? "Sérologie HCV positive"
+                      : "Positive HCV serology"
+                  }
                   name="HCV_REC"
                   checked={activeStats.HCV_REC}
                   onChange={handleInputChange}
                 />
                 <Checkbox
-                  label={language === "fr" ? "HbsAg" : "HBsAg"}
+                  label={
+                    language === "fr" ? "HBsAg positif" : "Positive HBsAg"
+                  }
                   name="HBV_SUR_ANTIGEN"
                   checked={activeStats.HBV_SUR_ANTIGEN}
                   onChange={handleInputChange}
@@ -1368,8 +1516,8 @@ function App() {
                 <Input
                   label={
                     language === "fr"
-                      ? "Nombre de mismatch HLA avec le receveur"
-                      : "Number of HLA mismatches with the recipient"
+                      ? "Nombre de mismatch HLA avec le donneur (A, B ou DR)"
+                      : "Number of HLA mismatches with the donor (A, B or DR)"
                   }
                   name="MM"
                   type="text"
@@ -1379,38 +1527,84 @@ function App() {
                 />
                 <Select
                   label={
-                    language === "fr" ? "Sérologie pour le CMV" : "CMV serology"
+                    language === "fr"
+                      ? "Sérologie pour le receveur CMV (positif/négatif)"
+                      : "Recipient CMV serology (positive/negative)"
                   }
-                  name="CMV_MM"
-                  value={activeStats.CMV_MM}
-                  onChange={handleInputChange}
+                  value={model4Serology.recipientCmv}
+                  onChange={(e) =>
+                    handleModel4SerologyChange(
+                      "recipientCmv",
+                      e.target.value as SerologyStatus,
+                    )
+                  }
                   options={[
                     {
                       value: "",
                       label: language === "fr" ? "Sélectionner…" : "Select…",
                     },
                     {
-                      value: "Faible",
-                      label: language === "fr" ? "Faible" : "Low",
+                      value: "positive",
+                      label: language === "fr" ? "Positif" : "Positive",
                     },
                     {
-                      value: "Moyen",
-                      label: language === "fr" ? "Moyen" : "Medium",
-                    },
-                    {
-                      value: "Ã‰levé",
-                      label: language === "fr" ? "Élevé" : "High",
+                      value: "negative",
+                      label: language === "fr" ? "Négatif" : "Negative",
                     },
                   ]}
                 />
-                <Checkbox
+                <Select
                   label={
-                    language === "fr" ? "Sérologie pour l'EBV" : "EBV serology"
+                    language === "fr"
+                      ? "Sérologie pour le receveur EBV (positif/négatif/inconnu)"
+                      : "Recipient EBV serology (positive/negative/unknown)"
                   }
-                  name="EBV_MM"
-                  checked={activeStats.EBV_MM}
-                  onChange={handleInputChange}
+                  value={model4Serology.recipientEbv}
+                  onChange={(e) =>
+                    handleModel4SerologyChange(
+                      "recipientEbv",
+                      e.target.value as SerologyStatus,
+                    )
+                  }
+                  options={[
+                    {
+                      value: "",
+                      label: language === "fr" ? "Sélectionner…" : "Select…",
+                    },
+                    {
+                      value: "positive",
+                      label: language === "fr" ? "Positif" : "Positive",
+                    },
+                    {
+                      value: "negative",
+                      label: language === "fr" ? "Négatif" : "Negative",
+                    },
+                    {
+                      value: "unknown",
+                      label: language === "fr" ? "Inconnu" : "Unknown",
+                    },
+                  ]}
                 />
+                <div
+                  style={{
+                    fontSize: "0.9rem",
+                    color: "hsl(var(--muted-foreground))",
+                  }}
+                >
+                  {language === "fr"
+                    ? `Niveau CMV calculé: ${activeStats.CMV_MM || "-"}`
+                    : `Computed CMV level: ${activeStats.CMV_MM || "-"}`}
+                </div>
+                <div
+                  style={{
+                    fontSize: "0.9rem",
+                    color: "hsl(var(--muted-foreground))",
+                  }}
+                >
+                  {language === "fr"
+                    ? `Niveau EBV calculé: ${activeStats.EBV_MM || "-"}`
+                    : `Computed EBV level: ${activeStats.EBV_MM || "-"}`}
+                </div>
                 {isPatientSurvivalModel &&
                   predictedRiskByModel[activeTabId] !== null && (
                     <div
@@ -1428,14 +1622,26 @@ function App() {
                       {`Erreur API: ${predictionErrorByModel[activeTabId]}`}
                     </div>
                   )}
+                <Button
+                  onClick={handlePatientProjectionUpdate}
+                  disabled={
+                    !isPatientSurvivalModel ||
+                    !isModel4FormValid ||
+                    isPredictingByModel[activeTabId]
+                  }
+                >
+                  {isPredictingByModel[activeTabId]
+                    ? "Mise à jour..."
+                    : "Mettre à jour les projections"}
+                </Button>
               </div>
             </Card>
           </section>
 
           <section style={isModel3 ? undefined : stickyGraphColumnStyle}>
             <Card
-              title={`Projection de survie post-greffe - ${activeModel.name}`}
-              description="Pourcentage de survie estimé au fil du temps."
+              title={language === "fr" ? "Projection de survie du greffon" : "Graft Survival Projection"}
+              description={language === "fr" ? "La probabilité d'être vivant avec un rein fonctionnel." : "Probability of being alive with a functioning graft."}
               headerRight={
                 <Button
                   onClick={handlePatientProjectionUpdate}
@@ -1484,22 +1690,7 @@ function App() {
                         position: "insideLeft",
                       }}
                     />
-                    <Tooltip
-                      content={
-                        activeTabId === "model-4"
-                          ? renderModel1Tooltip
-                          : undefined
-                      }
-                      contentStyle={
-                        activeTabId === "model-4"
-                          ? undefined
-                          : {
-                              backgroundColor: "hsl(var(--card))",
-                              borderColor: "hsl(var(--border))",
-                              borderRadius: "var(--radius)",
-                            }
-                      }
-                    />
+                    <Tooltip content={activeTabId === "model-4" ? renderModel1Tooltip : undefined} />
                     <Line
                       type="monotone"
                       dataKey="survival"
@@ -1547,37 +1738,27 @@ function App() {
         <div style={twoColumnLayoutStyle}>
           <section>
             <Card
-              title="Entrées du modèle 2"
-              description="Entrez les champs du candidat."
+              title="Variables pertinentes pour le modèle de temps d'attente"
+              description="Entrez les informations cliniques du candidat."
             >
               <div style={{ marginBottom: "1rem" }}>
                 {renderKdriSubsection("model-2")}
               </div>
+              <div
+                style={{
+                  borderTop: "1px solid hsl(var(--border))",
+                  marginBottom: "1rem",
+                  paddingTop: "0.75rem",
+                  fontSize: "0.9rem",
+                  color: "hsl(var(--muted-foreground))",
+                }}
+              >
+                Informations cliniques du candidat
+              </div>
               <div style={{ display: "grid", gap: "1rem" }}>
-                <Input
-                  label="Date de naissance"
-                  name="birth"
-                  type="date"
-                  required
-                  value={model2Inputs.birth}
-                  onChange={handleModel2Change}
-                />
-                <Input
-                  label="Date de début de dialyse"
-                  name="dialysis"
-                  type="date"
-                  required
-                  value={model2Inputs.dialysis}
-                  onChange={handleModel2Change}
-                />
-                <Input
-                  label="Date d'entrée en liste d'attente"
-                  name="arrival"
-                  type="date"
-                  required
-                  value={model2Inputs.arrival}
-                  onChange={handleModel2Change}
-                />
+                <Input label="Date de naissance" name="birth" type="date" required value={model2Inputs.birth} onChange={handleModel2Change} />
+                <Input label="Date de début de dialyse" name="dialysis" type="date" required value={model2Inputs.dialysis} onChange={handleModel2Change} />
+                <Input label="Date d'entrée en liste d'attente" name="arrival" type="date" required value={model2Inputs.arrival} onChange={handleModel2Change} />
                 <Select
                   label="Groupe sanguin (ABO)"
                   name="blood"
@@ -1585,96 +1766,30 @@ function App() {
                   value={model2Inputs.blood}
                   onChange={handleModel2Change}
                   options={[
-                    {
-                      value: "",
-                      label: language === "fr" ? "Sélectionner…" : "Select…",
-                    },
+                    { value: "", label: language === "fr" ? "Sélectionner…" : "Select…" },
                     { value: "O", label: "O" },
                     { value: "A", label: "A" },
                     { value: "B", label: "B" },
                     { value: "AB", label: "AB" },
                   ]}
                 />
-                <Input
-                  label="HLA-A allèle 1"
-                  name="a1"
-                  type="text"
-                  value={model2Inputs.a1}
-                  onChange={handleModel2Change}
-                />
-                <Input
-                  label="HLA-A allèle 2"
-                  name="a2"
-                  type="text"
-                  value={model2Inputs.a2}
-                  onChange={handleModel2Change}
-                />
-                <Input
-                  label="HLA-B allèle 1"
-                  name="b1"
-                  type="text"
-                  value={model2Inputs.b1}
-                  onChange={handleModel2Change}
-                />
-                <Input
-                  label="HLA-B allèle 2"
-                  name="b2"
-                  type="text"
-                  value={model2Inputs.b2}
-                  onChange={handleModel2Change}
-                />
-                <Input
-                  label="HLA-DR allèle 1"
-                  name="dr1"
-                  type="text"
-                  value={model2Inputs.dr1}
-                  onChange={handleModel2Change}
-                />
-                <Input
-                  label="HLA-DR allèle 2"
-                  name="dr2"
-                  type="text"
-                  value={model2Inputs.dr2}
-                  onChange={handleModel2Change}
-                />
-                <Input
-                  label="cPRA (0-100)"
-                  name="cpra"
-                  type="number"
-                  required
-                  min={0}
-                  max={100}
-                  value={model2Inputs.cpra}
-                  onChange={handleModel2Change}
-                />
-                <Checkbox
-                  label="Toujours actif (expiration_date = rien)"
-                  name="expiration_active"
-                  checked={isExpirationActive}
-                  onChange={handleModel2Change}
-                />
-                <Input
-                  label="Date d'expiration d'éligibilité"
-                  name="expiration_date"
-                  type="date"
-                  required={!isExpirationActive}
-                  value={model2Inputs.expiration_date ?? ""}
-                  onChange={handleModel2Change}
-                  disabled={isExpirationActive}
-                />
+                <Input label="HLA-A allèle 1" name="a1" type="text" value={model2Inputs.a1} onChange={handleModel2Change} />
+                <Input label="HLA-A allèle 2" name="a2" type="text" value={model2Inputs.a2} onChange={handleModel2Change} />
+                <Input label="HLA-B allèle 1" name="b1" type="text" value={model2Inputs.b1} onChange={handleModel2Change} />
+                <Input label="HLA-B allèle 2" name="b2" type="text" value={model2Inputs.b2} onChange={handleModel2Change} />
+                <Input label="HLA-DR allèle 1" name="dr1" type="text" value={model2Inputs.dr1} onChange={handleModel2Change} />
+                <Input label="HLA-DR allèle 2" name="dr2" type="text" value={model2Inputs.dr2} onChange={handleModel2Change} />
+                <Input label="cPRA (0-100)" name="cpra" type="number" required min={0} max={100} value={model2Inputs.cpra} onChange={handleModel2Change} />
+                <Button onClick={handleModel2Simulation} disabled={!isModel2FormValid || isModel2Simulating}>
+                  {isModel2Simulating ? "Simulation en cours..." : "Lancer la simulation"}
+                </Button>
+
                 {model2SimulationError && (
-                  <div
-                    style={{ fontSize: "0.9rem", color: "#dc2626" }}
-                  >{`Erreur API: ${model2SimulationError}`}</div>
+                  <div style={{ fontSize: "0.9rem", color: "#dc2626" }}>{`Erreur API: ${model2SimulationError}`}</div>
                 )}
                 {!model2SimulationError && model2WaitTimes.length > 0 && (
-                  <div
-                    style={{
-                      fontSize: "0.9rem",
-                      color: "hsl(var(--muted-foreground))",
-                    }}
-                  >
-                    {`${model2WaitTimes.length} temps d'attente simulés reÃ§us.`}
+                  <div style={{ fontSize: "0.9rem", color: "hsl(var(--muted-foreground))" }}>
+                    {`${model2WaitTimes.length} temps d'attente simulés reçus.`}
                   </div>
                 )}
               </div>
@@ -1683,44 +1798,25 @@ function App() {
 
           <section style={stickyGraphColumnStyle}>
             <Card
-              title="Distribution (histogramme) - Modèle 2"
+              title="Distribution simulée des temps d'attente"
               description="Histogramme des temps d'attente simulés (en mois)."
               headerRight={
-                <Button
-                  onClick={handleModel2Simulation}
-                  disabled={!isModel2FormValid || isModel2Simulating}
-                >
-                  {isModel2Simulating
-                    ? "Simulation en cours..."
-                    : "Lancer 100 simulations"}
+                <Button onClick={handleModel2Simulation} disabled={!isModel2FormValid || isModel2Simulating}>
+                  {isModel2Simulating ? "Simulation en cours..." : "Lancer la simulation"}
                 </Button>
               }
             >
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                {renderExportMenu(
-                  model2ChartRef.current,
-                  "modele-2-histogramme",
-                )}
+                {renderExportMenu(model2ChartRef.current, "modele-2-histogramme")}
               </div>
-              <div
-                ref={model2ChartRef}
-                style={{ height: "300px", width: "100%", position: "relative" }}
-              >
+              <div ref={model2ChartRef} style={{ height: "300px", width: "100%", position: "relative" }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={model2Histogram}>
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      vertical={false}
-                      stroke="hsl(var(--border))"
-                    />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                     <XAxis dataKey="intervalle" />
                     <YAxis />
                     <Tooltip content={renderModel2Tooltip} />
-                    <Bar
-                      dataKey="frequence"
-                      fill="hsl(var(--primary))"
-                      radius={[4, 4, 0, 0]}
-                    />
+                    <Bar dataKey="frequence" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
                 {model2WaitTimes.length === 0 && !isModel2Simulating && (
@@ -1741,6 +1837,37 @@ function App() {
                   </div>
                 )}
               </div>
+              <div
+                style={{
+                  marginTop: "0.75rem",
+                  fontSize: "0.88rem",
+                  color: "hsl(var(--muted-foreground))",
+                }}
+              >
+                Avertissement : la simulation peut prendre jusqu'à 15 secondes.
+              </div>
+              {model2SummaryStats && (
+                <ul
+                  style={{
+                    marginTop: "0.5rem",
+                    fontSize: "0.9rem",
+                    color: "hsl(var(--muted-foreground))",
+                    paddingLeft: "1.2rem",
+                    display: "grid",
+                    gap: "0.35rem",
+                  }}
+                >
+                  <li>
+                    Médiane : {model2SummaryStats.median.toFixed(1)} mois — temps d'attente typique attendu pour un candidat moyen.
+                  </li>
+                  <li>
+                    Écart inter-quartiles (Q1-Q3) : {model2SummaryStats.q1.toFixed(1)}-{model2SummaryStats.q3.toFixed(1)} mois — zone où se trouve la moitié centrale des simulations.
+                  </li>
+                  <li>
+                    Étendue (min-max) : {model2SummaryStats.min.toFixed(1)}-{model2SummaryStats.max.toFixed(1)} mois — valeurs extrêmes observées dans les simulations.
+                  </li>
+                </ul>
+              )}
             </Card>
           </section>
         </div>
@@ -1750,5 +1877,31 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
