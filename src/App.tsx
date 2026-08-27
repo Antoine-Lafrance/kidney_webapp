@@ -88,6 +88,137 @@ interface SurvivalChartPoint {
 type Language = "fr" | "en";
 
 type SerologyStatus = "" | "positive" | "negative" | "unknown";
+const MODEL2_BLOOD_VALUES = ["O", "A", "B", "AB"] as const;
+const HLA_ANTIGEN_PATTERN = /^(?:0?[1-9]|[1-9][0-9])$/;
+
+const DIAG_KI_TO_API: Record<string, string> = {
+  "Autre ou inconnu": "Other or unknown",
+  "Néphropathie diabétique": "Diabetic nephropathy",
+  "Néphrosclérose hypertensive": "Hypertensive nephrosclerosis",
+  "Maladie polykystique rénale": "Polycystic kidney disease",
+  "Glomérulonéphrite": "Glomerulonephritis",
+  "Other or unknown": "Other or unknown",
+  "Diabetic nephropathy": "Diabetic nephropathy",
+  "Hypertensive nephrosclerosis": "Hypertensive nephrosclerosis",
+  "Polycystic kidney disease": "Polycystic kidney disease",
+  Glomerulonephritis: "Glomerulonephritis",
+  Unknown: "Unknown",
+};
+
+const CMV_LEVEL_TO_API: Record<string, string> = {
+  Faible: "Low",
+  Moyen: "Medium",
+  "Élevé": "High",
+  Low: "Low",
+  Medium: "Medium",
+  High: "High",
+};
+
+const mapDiagKiForApi = (value: string): string | null =>
+  DIAG_KI_TO_API[value] ?? null;
+
+const mapCmvLevelForApi = (value: string): string | null =>
+  CMV_LEVEL_TO_API[value] ?? null;
+
+const validateModel2InputsForApi = (
+  inputs: Model2Inputs,
+  language: Language,
+): string | null => {
+  if (!MODEL2_BLOOD_VALUES.includes(inputs.blood as (typeof MODEL2_BLOOD_VALUES)[number])) {
+    return language === "fr"
+      ? "Le groupe sanguin doit être O, A, B ou AB."
+      : "Blood group must be O, A, B, or AB.";
+  }
+
+  const alleleFields: Array<keyof Pick<Model2Inputs, "a1" | "a2" | "b1" | "b2" | "dr1" | "dr2">> = [
+    "a1",
+    "a2",
+    "b1",
+    "b2",
+    "dr1",
+    "dr2",
+  ];
+
+  for (const field of alleleFields) {
+    const value = inputs[field].trim();
+    if (!HLA_ANTIGEN_PATTERN.test(value)) {
+      return language === "fr"
+        ? `La valeur ${field.toUpperCase()} doit être un code numérique HLA (1-99), par exemple 01, 07 ou 15.`
+        : `${field.toUpperCase()} must be a numeric HLA code (1-99), for example 01, 07, or 15.`;
+    }
+  }
+
+  const birthDate = new Date(inputs.birth);
+  const dialysisDate = new Date(inputs.dialysis);
+  const arrivalDate = new Date(inputs.arrival);
+
+  if (
+    Number.isNaN(birthDate.getTime()) ||
+    Number.isNaN(dialysisDate.getTime()) ||
+    Number.isNaN(arrivalDate.getTime())
+  ) {
+    return language === "fr"
+      ? "Les dates doivent être valides (format AAAA-MM-JJ)."
+      : "Dates must be valid (YYYY-MM-DD format).";
+  }
+
+  if (dialysisDate < birthDate) {
+    return language === "fr"
+      ? "La date de début de dialyse ne peut pas être antérieure à la date de naissance."
+      : "Dialysis start date cannot be earlier than birth date.";
+  }
+
+  if (arrivalDate < dialysisDate) {
+    return language === "fr"
+      ? "La date d'entrée en liste d'attente ne peut pas être antérieure au début de dialyse."
+      : "Waitlist entry date cannot be earlier than dialysis start date.";
+  }
+
+  if (typeof inputs.cpra !== "number" || !Number.isInteger(inputs.cpra) || inputs.cpra < 0 || inputs.cpra > 100) {
+    return language === "fr"
+      ? "Le cPRA doit être un entier entre 0 et 100."
+      : "cPRA must be an integer between 0 and 100.";
+  }
+
+  return null;
+};
+
+const buildModel2ApiErrorMessage = (
+  status: number,
+  errorText: string,
+  language: Language,
+): string => {
+  if (status === 422 && errorText.includes("cpra")) {
+    return language === "fr"
+      ? "Le cPRA doit être compris entre 0 et 100."
+      : "cPRA must be between 0 and 100.";
+  }
+
+  if (status >= 500) {
+    return language === "fr"
+      ? "Certaines valeurs ne sont pas compatibles avec la simulation. Vérifiez ABO (O/A/B/AB), cPRA (0-100) et les allèles HLA au format numérique (ex: 01, 07, 15)."
+      : "Some values are not compatible with simulation. Check ABO (O/A/B/AB), cPRA (0-100), and HLA alleles as numeric codes (e.g., 01, 07, 15).";
+  }
+
+  return language === "fr"
+    ? "La simulation a échoué. Vérifiez les valeurs saisies."
+    : "Simulation failed. Please review the entered values.";
+};
+
+const buildPredictionApiErrorMessage = (
+  status: number,
+  language: Language,
+): string => {
+  if (status >= 500 || status === 400) {
+    return language === "fr"
+      ? "Certaines valeurs cliniques ne sont pas acceptées par le modèle. Vérifiez MM (0-6), le diagnostic rénal et les niveaux CMV/EBV."
+      : "Some clinical values are not accepted by the model. Check MM (0-6), kidney diagnosis, and CMV/EBV levels.";
+  }
+
+  return language === "fr"
+    ? "La projection a échoué. Vérifiez les valeurs saisies."
+    : "Projection failed. Please review the entered values.";
+};
 
 interface Model4SerologyInputs {
   donorCmv: SerologyStatus;
@@ -247,16 +378,16 @@ const waitTimesToHistogram = (waitTimes: number[]): HistogramBin[] => {
 };
 
 const MEDIAN_PAIR_SURVIVAL_CURVE: SurvivalPoint[] = [
-  { year: 1, survival: 98.4 },
-  { year: 2, survival: 97.6 },
-  { year: 3, survival: 97.5 },
-  { year: 4, survival: 96.9 },
-  { year: 5, survival: 94.5 },
-  { year: 6, survival: 92.8 },
-  { year: 7, survival: 92.3 },
-  { year: 8, survival: 92.3 },
-  { year: 9, survival: 88.6 },
-  { year: 10, survival: 83.0 },
+  { year: 1, survival: 98.5 },
+  { year: 2, survival: 98.0 },
+  { year: 3, survival: 97.3 },
+  { year: 4, survival: 95.4 },
+  { year: 5, survival: 92.3 },
+  { year: 6, survival: 85.6 },
+  { year: 7, survival: 82.8 },
+  { year: 8, survival: 81.5 },
+  { year: 9, survival: 79.4 },
+  { year: 10, survival: 74.7 },
 ];
 
 const downloadBlob = (blob: Blob, fileName: string) => {
@@ -619,8 +750,52 @@ function App() {
       model4Serology.donorEbv,
       model4Serology.recipientEbv,
     );
+    const mappedDiagKi = mapDiagKiForApi(payload.DIAG_KI);
+    const mappedCmvLevel = mapCmvLevelForApi(payload.CMV_MM);
+
+    if (!mappedDiagKi) {
+      const message =
+        language === "fr"
+          ? "Cause de maladie rénale non reconnue. Choisissez une valeur de la liste."
+          : "Unrecognized kidney disease cause. Please choose a value from the list.";
+      setPredictionErrorByModel((prev) => ({ ...prev, [modelId]: message }));
+      toast.error(
+        language === "fr" ? "Validation des entrées" : "Input validation",
+        { description: message },
+      );
+      return;
+    }
+
+    if (!mappedCmvLevel) {
+      const message =
+        language === "fr"
+          ? "Niveau CMV invalide. Veuillez choisir les sérologies donneur/receveur."
+          : "Invalid CMV level. Please choose donor/recipient serologies.";
+      setPredictionErrorByModel((prev) => ({ ...prev, [modelId]: message }));
+      toast.error(
+        language === "fr" ? "Validation des entrées" : "Input validation",
+        { description: message },
+      );
+      return;
+    }
+
+    if (!/^[0-6]$/.test(payload.MM.trim())) {
+      const message =
+        language === "fr"
+          ? "Le nombre de mismatch HLA (MM) doit être un entier entre 0 et 6."
+          : "HLA mismatch count (MM) must be an integer between 0 and 6.";
+      setPredictionErrorByModel((prev) => ({ ...prev, [modelId]: message }));
+      toast.error(
+        language === "fr" ? "Validation des entrées" : "Input validation",
+        { description: message },
+      );
+      return;
+    }
+
     const payloadForApi = {
       ...payload,
+      DIAG_KI: mappedDiagKi,
+      CMV_MM: mappedCmvLevel,
       IMC: isFiniteNumber(payload.IMC)
         ? payload.IMC
         : isFiniteNumber(kdriInputs.weight)
@@ -640,8 +815,7 @@ function App() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || "Prediction request failed");
+        throw new Error(buildPredictionApiErrorMessage(response.status, language));
       }
 
       const data = (await response.json()) as PredictionApiResponse;
@@ -668,6 +842,16 @@ function App() {
   };
 
   const handleModel2Simulation = async () => {
+    const validationMessage = validateModel2InputsForApi(model2Inputs, language);
+    if (validationMessage) {
+      setModel2SimulationError(validationMessage);
+      toast.error(
+        language === "fr" ? "Validation des entrées" : "Input validation",
+        { description: validationMessage },
+      );
+      return;
+    }
+
     setIsModel2Simulating(true);
     setModel2SimulationError(null);
 
@@ -683,7 +867,7 @@ function App() {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(errorText || "Simulation request failed");
+        throw new Error(buildModel2ApiErrorMessage(response.status, errorText, language));
       }
 
       const data = (await response.json()) as Model2SimulationResponse;
@@ -1875,6 +2059,14 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
+
+
+
 
 
 
