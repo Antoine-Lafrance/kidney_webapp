@@ -10,7 +10,9 @@ interface LayoutProps {
 }
 
 export const Layout: React.FC<LayoutProps> = ({ children, language, onLanguageChange }) => {
-  const title = language === "fr" ? "Visualisation de survie rénale" : "Kidney Survival Visualization";
+  const title = language === "fr"
+    ? "Outil de soutien à la décision clinique lors d’une offre de rein par transplant Québéc."
+    : "Clinical Decision Support Tool for a Kidney Offer by Transplant Québec.";
 
   return (
     <div className={styles.wrapper}>

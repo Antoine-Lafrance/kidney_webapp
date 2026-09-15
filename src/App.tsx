@@ -89,7 +89,6 @@ type Language = "fr" | "en";
 
 type SerologyStatus = "" | "positive" | "negative" | "unknown";
 const MODEL2_BLOOD_VALUES = ["O", "A", "B", "AB"] as const;
-const HLA_ANTIGEN_PATTERN = /^(?:0?[1-9]|[1-9][0-9])$/;
 
 const DIAG_KI_TO_API: Record<string, string> = {
   "Autre ou inconnu": "Other or unknown",
@@ -130,24 +129,6 @@ const validateModel2InputsForApi = (
       : "Blood group must be O, A, B, or AB.";
   }
 
-  const alleleFields: Array<keyof Pick<Model2Inputs, "a1" | "a2" | "b1" | "b2" | "dr1" | "dr2">> = [
-    "a1",
-    "a2",
-    "b1",
-    "b2",
-    "dr1",
-    "dr2",
-  ];
-
-  for (const field of alleleFields) {
-    const value = inputs[field].trim();
-    if (!HLA_ANTIGEN_PATTERN.test(value)) {
-      return language === "fr"
-        ? `La valeur ${field.toUpperCase()} doit être un code numérique HLA (1-99), par exemple 01, 07 ou 15.`
-        : `${field.toUpperCase()} must be a numeric HLA code (1-99), for example 01, 07, or 15.`;
-    }
-  }
-
   const birthDate = new Date(inputs.birth);
   const dialysisDate = new Date(inputs.dialysis);
   const arrivalDate = new Date(inputs.arrival);
@@ -166,12 +147,6 @@ const validateModel2InputsForApi = (
     return language === "fr"
       ? "La date de début de dialyse ne peut pas être antérieure à la date de naissance."
       : "Dialysis start date cannot be earlier than birth date.";
-  }
-
-  if (arrivalDate < dialysisDate) {
-    return language === "fr"
-      ? "La date d'entrée en liste d'attente ne peut pas être antérieure au début de dialyse."
-      : "Waitlist entry date cannot be earlier than dialysis start date.";
   }
 
   if (typeof inputs.cpra !== "number" || !Number.isInteger(inputs.cpra) || inputs.cpra < 0 || inputs.cpra > 100) {
@@ -196,8 +171,8 @@ const buildModel2ApiErrorMessage = (
 
   if (status >= 500) {
     return language === "fr"
-      ? "Certaines valeurs ne sont pas compatibles avec la simulation. Vérifiez ABO (O/A/B/AB), cPRA (0-100) et les allèles HLA au format numérique (ex: 01, 07, 15)."
-      : "Some values are not compatible with simulation. Check ABO (O/A/B/AB), cPRA (0-100), and HLA alleles as numeric codes (e.g., 01, 07, 15).";
+      ? "Certaines valeurs ne sont pas compatibles avec la simulation. Vérifiez le groupe ABO (O/A/B/AB) et le cPRA (0-100)."
+      : "Some values are not compatible with simulation. Check ABO (O/A/B/AB) and cPRA (0-100).";
   }
 
   return language === "fr"
@@ -377,19 +352,6 @@ const waitTimesToHistogram = (waitTimes: number[]): HistogramBin[] => {
   return bins;
 };
 
-const MEDIAN_PAIR_SURVIVAL_CURVE: SurvivalPoint[] = [
-  { year: 1, survival: 98.5 },
-  { year: 2, survival: 98.0 },
-  { year: 3, survival: 97.3 },
-  { year: 4, survival: 95.4 },
-  { year: 5, survival: 92.3 },
-  { year: 6, survival: 85.6 },
-  { year: 7, survival: 82.8 },
-  { year: 8, survival: 81.5 },
-  { year: 9, survival: 79.4 },
-  { year: 10, survival: 74.7 },
-];
-
 const downloadBlob = (blob: Blob, fileName: string) => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -471,6 +433,11 @@ function App() {
     "model-4": null,
   });
   const [apiSurvivalByModel, setApiSurvivalByModel] = useState<
+    Record<string, SurvivalPoint[]>
+  >({
+    "model-4": [],
+  });
+  const [medianApiSurvivalByModel, setMedianApiSurvivalByModel] = useState<
     Record<string, SurvivalPoint[]>
   >({
     "model-4": [],
@@ -808,17 +775,32 @@ function App() {
     setPredictionErrorByModel((prev) => ({ ...prev, [modelId]: null }));
 
     try {
-      const response = await fetch(`${API_BASE_URL}/predict/patient`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payloadForApi),
-      });
+      const medianPayloadForApi = {
+        ...payloadForApi,
+        KDRI_RAO: 1.32671,
+      };
+      const [response, medianResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/predict/patient`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payloadForApi),
+        }),
+        fetch(`${API_BASE_URL}/predict/patient`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(medianPayloadForApi),
+        }),
+      ]);
 
       if (!response.ok) {
         throw new Error(buildPredictionApiErrorMessage(response.status, language));
       }
+      if (!medianResponse.ok) {
+        throw new Error(buildPredictionApiErrorMessage(medianResponse.status, language));
+      }
 
       const data = (await response.json()) as PredictionApiResponse;
+      const medianData = (await medianResponse.json()) as PredictionApiResponse;
       setPredictedRiskByModel((prev) => ({
         ...prev,
         [modelId]: data.risk_score,
@@ -826,6 +808,10 @@ function App() {
       setApiSurvivalByModel((prev) => ({
         ...prev,
         [modelId]: buildSurvivalPointsFromApi(data),
+      }));
+      setMedianApiSurvivalByModel((prev) => ({
+        ...prev,
+        [modelId]: buildSurvivalPointsFromApi(medianData),
       }));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -900,12 +886,12 @@ function App() {
         ...point,
         medianSurvival:
           activeTabId === "model-4"
-            ? MEDIAN_PAIR_SURVIVAL_CURVE.find(
+            ? medianApiSurvivalByModel[activeTabId]?.find(
                 (medianPoint) => medianPoint.year === point.year,
               )?.survival
             : undefined,
       })),
-    [activeTabId, survivalData],
+    [activeTabId, medianApiSurvivalByModel, survivalData],
   );
   const renderModel1Tooltip = ({ active, payload, label }: any) => {
     if (!active || !payload || !payload.length) {
@@ -941,7 +927,7 @@ function App() {
         {typeof medianPair === "number" && (
           <div
             style={{ color: "#dc2626" }}
-          >{`La probabilité d'être vivant avec un rein fonctionnel (paire médiane): ${medianPair.toFixed(1)}%`}</div>
+          >{`La probabilité d'être vivant avec un rein fonctionnel (médiane KDRI): ${medianPair.toFixed(1)}%`}</div>
         )}
         <div
           style={{
@@ -950,7 +936,7 @@ function App() {
             marginTop: "0.2rem",
           }}
         >
-          Lecture simple: la ligne rouge représente la paire médiane de cohorte,
+          Lecture simple: la ligne rouge utilise la médiane KDRI,
           l'autre ligne correspond au profil saisi. Plus le pourcentage est
           élevé, meilleures sont les chances de survie à ce moment.
         </div>
@@ -1205,16 +1191,6 @@ function App() {
               ? "Indice de risque du donneur rénal (KDRI)"
               : "Kidney Donor Risk Index (KDRI)"}
           </strong>
-          <span
-            style={{
-              fontSize: "0.85rem",
-              color: "hsl(var(--muted-foreground))",
-            }}
-          >
-            {language === "fr"
-              ? "Entrez les variables du donneur ci-dessous. La créatinine est saisie en µmol/L et convertie en mg/dL dans le modèle (mg/dL = µmol/L ÷ 88)."
-              : "Enter the donor variables below. Serum creatinine is entered in µmol/L and converted to mg/dL in the model (mg/dL = µmol/L ÷ 88)."}
-          </span>
         </div>
 
         <div style={kdriFieldsGridStyle}>
@@ -1443,10 +1419,6 @@ function App() {
                       value: "Femme",
                       label: language === "fr" ? "Femme" : "Female",
                     },
-                    {
-                      value: "Autre",
-                      label: language === "fr" ? "Autre" : "Other",
-                    },
                   ]}
                 />
                 <Checkbox
@@ -1559,10 +1531,6 @@ function App() {
                     {
                       value: "Femme",
                       label: language === "fr" ? "Femme" : "Female",
-                    },
-                    {
-                      value: "Autre",
-                      label: language === "fr" ? "Autre" : "Other",
                     },
                   ]}
                 />
@@ -1767,26 +1735,6 @@ function App() {
                     },
                   ]}
                 />
-                <div
-                  style={{
-                    fontSize: "0.9rem",
-                    color: "hsl(var(--muted-foreground))",
-                  }}
-                >
-                  {language === "fr"
-                    ? `Niveau CMV calculé: ${activeStats.CMV_MM || "-"}`
-                    : `Computed CMV level: ${activeStats.CMV_MM || "-"}`}
-                </div>
-                <div
-                  style={{
-                    fontSize: "0.9rem",
-                    color: "hsl(var(--muted-foreground))",
-                  }}
-                >
-                  {language === "fr"
-                    ? `Niveau EBV calculé: ${activeStats.EBV_MM || "-"}`
-                    : `Computed EBV level: ${activeStats.EBV_MM || "-"}`}
-                </div>
                 {isPatientSurvivalModel &&
                   predictedRiskByModel[activeTabId] !== null && (
                     <div
@@ -1955,12 +1903,12 @@ function App() {
                     { value: "AB", label: "AB" },
                   ]}
                 />
-                <Input label="HLA-A allèle 1" name="a1" type="text" value={model2Inputs.a1} onChange={handleModel2Change} />
-                <Input label="HLA-A allèle 2" name="a2" type="text" value={model2Inputs.a2} onChange={handleModel2Change} />
-                <Input label="HLA-B allèle 1" name="b1" type="text" value={model2Inputs.b1} onChange={handleModel2Change} />
-                <Input label="HLA-B allèle 2" name="b2" type="text" value={model2Inputs.b2} onChange={handleModel2Change} />
-                <Input label="HLA-DR allèle 1" name="dr1" type="text" value={model2Inputs.dr1} onChange={handleModel2Change} />
-                <Input label="HLA-DR allèle 2" name="dr2" type="text" value={model2Inputs.dr2} onChange={handleModel2Change} />
+                <Input label="HLA-A allèle 1" name="a1" type="number" step="any" value={model2Inputs.a1} onChange={handleModel2Change} />
+                <Input label="HLA-A allèle 2" name="a2" type="number" step="any" value={model2Inputs.a2} onChange={handleModel2Change} />
+                <Input label="HLA-B allèle 1" name="b1" type="number" step="any" value={model2Inputs.b1} onChange={handleModel2Change} />
+                <Input label="HLA-B allèle 2" name="b2" type="number" step="any" value={model2Inputs.b2} onChange={handleModel2Change} />
+                <Input label="HLA-DR allèle 1" name="dr1" type="number" step="any" value={model2Inputs.dr1} onChange={handleModel2Change} />
+                <Input label="HLA-DR allèle 2" name="dr2" type="number" step="any" value={model2Inputs.dr2} onChange={handleModel2Change} />
                 <Input label="cPRA (0-100)" name="cpra" type="number" required min={0} max={100} value={model2Inputs.cpra} onChange={handleModel2Change} />
                 <Button onClick={handleModel2Simulation} disabled={!isModel2FormValid || isModel2Simulating}>
                   {isModel2Simulating ? "Simulation en cours..." : "Lancer la simulation"}
@@ -1980,7 +1928,7 @@ function App() {
 
           <section style={stickyGraphColumnStyle}>
             <Card
-              title="Distribution simulée des temps d'attente"
+              title="Estimation des temps d’attente"
               description="Histogramme des temps d'attente simulés (en mois)."
               headerRight={
                 <Button onClick={handleModel2Simulation} disabled={!isModel2FormValid || isModel2Simulating}>
@@ -2059,13 +2007,6 @@ function App() {
 }
 
 export default App;
-
-
-
-
-
-
-
 
 
 

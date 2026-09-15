@@ -10,7 +10,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     <div className={styles.wrapper}>
       <header className={styles.header}>
         <div className="container">
-          <h1 className={styles.logo}>Visualisation de survie rénale</h1>
+          <h1 className={styles.logo}>Outil de soutien à la décision clinique lors d’une offre de rein par transplant Québéc.</h1>
         </div>
       </header>
       <main className={styles.main}>
