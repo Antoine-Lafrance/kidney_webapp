@@ -11,7 +11,7 @@ interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children, language, onLanguageChange }) => {
   const title = language === "fr"
-    ? "Outil de soutien à la décision clinique lors d’une offre de rein par transplant Québéc."
+    ? "Outil québécois de soutien à la décision clinique lors d'une offre de rein de donneur décédé"
     : "Clinical Decision Support Tool for a Kidney Offer by Transplant Québec.";
 
   return (

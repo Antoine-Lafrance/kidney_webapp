@@ -662,7 +662,6 @@ function App() {
           [modelId]: {
             ...(prevStats[modelId] ?? createInitialStats()),
             KDRI_RAO: nextKdri,
-            AGE: nextKdriInputs.age,
             HGT_CM_CALC: nextKdriInputs.height,
           },
         }));
@@ -1513,6 +1512,17 @@ function App() {
               <div
                 style={isModel3 ? model3FormGridStyle : defaultFormStackStyle}
               >
+                {activeTabId === "model-4" && (
+                  <Input
+                    label={language === "fr" ? "Âge du receveur" : "Recipient age"}
+                    name="AGE"
+                    type="number"
+                    required
+                    min={0}
+                    value={activeStats.AGE}
+                    onChange={handleInputChange}
+                  />
+                )}
                 <Select
                   label={language === "fr" ? "Sexe" : "Sex"}
                   name="GENDER"
@@ -2007,7 +2017,6 @@ function App() {
 }
 
 export default App;
-
 
 
 
